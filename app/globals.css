@@ -1,26 +1,202 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* --------------------------------------------------------------------------
+   Theme tokens. Dark is the default (this is a call-centre console meant to
+   sit on a screen all day); light is opt-in via data-theme on <html>.
+   -------------------------------------------------------------------------- */
+
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #06060a;
+  --bg-tint-a: rgba(124, 92, 255, 0.16);
+  --bg-tint-b: rgba(34, 211, 238, 0.1);
+
+  --surface: #0a0a11;
+  --surface-2: rgba(255, 255, 255, 0.035);
+  --surface-3: rgba(255, 255, 255, 0.06);
+  --surface-4: rgba(255, 255, 255, 0.1);
+
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.18);
+
+  --text: #f3f3f7;
+  --text-muted: #8e8fa3;
+  --text-dim: #5c5d72;
+
+  --accent: #7c5cff;
+  --accent-2: #22d3ee;
+  --accent-contrast: #ffffff;
+  --accent-glow: rgba(124, 92, 255, 0.55);
+  --accent-soft: rgba(124, 92, 255, 0.14);
+
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f43f5e;
+  --ring: rgba(124, 92, 255, 0.65);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #f4f5fa;
+  --bg-tint-a: rgba(124, 92, 255, 0.14);
+  --bg-tint-b: rgba(34, 211, 238, 0.12);
+
+  --surface: #ffffff;
+  --surface-2: rgba(12, 14, 40, 0.035);
+  --surface-3: rgba(12, 14, 40, 0.06);
+  --surface-4: #ffffff;
+
+  --border: rgba(12, 14, 40, 0.1);
+  --border-strong: rgba(12, 14, 40, 0.22);
+
+  --text: #101223;
+  --text-muted: #5a5e78;
+  --text-dim: #8a8ea8;
+
+  --accent: #6d45ff;
+  --accent-2: #0891b2;
+  --accent-contrast: #ffffff;
+  --accent-glow: rgba(109, 69, 255, 0.4);
+  --accent-soft: rgba(109, 69, 255, 0.1);
+
+  --success: #059669;
+  --warning: #d97706;
+  --danger: #e11d48;
+  --ring: rgba(109, 69, 255, 0.5);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* --------------------------------------------------------------------------
+   Base
+   -------------------------------------------------------------------------- */
+
+html {
+  background: var(--bg);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Ambient light behind the console. Fixed so it never scrolls. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(60rem 40rem at 50% -10%, var(--bg-tint-a), transparent 70%),
+    radial-gradient(45rem 35rem at 85% 15%, var(--bg-tint-b), transparent 70%);
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+/* Slim scrollbars inside panels. */
+.scroll-slim {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.scroll-slim::-webkit-scrollbar {
+  width: 6px;
+}
+.scroll-slim::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+}
+
+/* --------------------------------------------------------------------------
+   Motion
+   -------------------------------------------------------------------------- */
+
+@keyframes orb-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 1;
+  }
+}
+
+@keyframes orb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes ring-ripple {
+  0% {
+    transform: scale(0.85);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+@keyframes dot-bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.45;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+@keyframes fade-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.animate-fade-rise {
+  animation: fade-rise 0.28s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
