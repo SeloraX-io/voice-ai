@@ -48,6 +48,13 @@ export function ConsoleChrome({ children }: { children: React.ReactNode }) {
   // read as "no call running" / "0 seconds" purely by being gated here, rather
   // than through a dedicated effect that resets them — this codebase's lint
   // config forbids calling setState directly in an effect body.
+  // The bridge page runs its own call over a real phone line. Offering the
+  // preview there invites a second, separately billed Gemini session on top of
+  // a live call. A preview call already in flight keeps its panel wherever the
+  // operator navigates, so hiding it can never strand a running call with no
+  // way to stop it.
+  const showPreview = pathname !== "/telephony" || callActive;
+
   const activeCallStartedWith = callActive ? callStartedWith : null;
   const displayedCallSeconds = callActive ? callSeconds : 0;
 
@@ -75,17 +82,19 @@ export function ConsoleChrome({ children }: { children: React.ReactNode }) {
           {showSaveBar && <SaveBar />}
         </div>
 
-        <PreviewPanel
-          voice={voice}
-          onStart={startCall}
-          agentName={config.agentName}
-          dirty={dirty}
-          callStartedWith={activeCallStartedWith}
-          currentUpdatedAt={config.updatedAt}
-          callActive={callActive}
-          callSeconds={displayedCallSeconds}
-          onSaveAndStart={saveAndStartCall}
-        />
+        {showPreview && (
+          <PreviewPanel
+            voice={voice}
+            onStart={startCall}
+            agentName={config.agentName}
+            dirty={dirty}
+            callStartedWith={activeCallStartedWith}
+            currentUpdatedAt={config.updatedAt}
+            callActive={callActive}
+            callSeconds={displayedCallSeconds}
+            onSaveAndStart={saveAndStartCall}
+          />
+        )}
       </div>
     </div>
   );

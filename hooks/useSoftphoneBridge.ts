@@ -285,8 +285,17 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
    * the SIP call is held open until it has played out — hanging up immediately
    * cuts the agent off mid-goodbye, which is exactly what the agent's own
    * hang-up path must not do.
+   *
+   * Takes the socket that closed, because this callback is shared by every
+   * call's `VoiceClient` and a close arrives 10–100 ms after `close()` is
+   * called. That is long enough for the next call to have opened its own
+   * socket, and acting on the dead one's close would null the live client
+   * (the agent then hears nothing and its Gemini session is never released)
+   * and drag the new call into `ending`. `callIdRef` guards only the timer,
+   * not the body — the identity check has to be the first thing here.
    */
-  const handleGatewayClose = useCallback(() => {
+  const handleGatewayClose = useCallback((client: VoiceClient) => {
+    if (clientRef.current !== client) return;
     clientRef.current = null;
     dispatch({ type: "gateway_closed" });
 
@@ -317,6 +326,13 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
    */
   const handleIncoming = useCallback(
     (info: { from: string | null; to: string | null }) => {
+      // `goOffline()` drops its reference before it awaits the unregister, so
+      // an INVITE can still reach this handler after the bridge has been taken
+      // offline. Building a call there would open a Gemini session with nothing
+      // to answer, and leave `answeringRef` stuck true so every later INVITE
+      // got 480.
+      if (!sipRef.current) return;
+
       if (answeringRef.current) {
         // The previous call is still being released. Decline rather than
         // answer into a half-torn-down audio graph.
@@ -350,15 +366,22 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
           const outbound = player.outputStream;
           if (!outbound) throw new Error("The audio player produced no outgoing stream.");
 
-          const client = new VoiceClient(resolveGatewayUrl(), {
+          const client: VoiceClient = new VoiceClient(resolveGatewayUrl(), {
             onMessage: handleServerMessage,
-            onClose: handleGatewayClose,
+            // Names the socket whose close this is. Safe despite `client` not
+            // being assigned yet: the handler only ever runs after connect().
+            onClose: () => handleGatewayClose(client),
             onError: (error) => setNotice(error.message),
           });
           clientRef.current = client;
           await client.connect();
 
-          sipRef.current?.answer(outbound);
+          // Re-read rather than reusing the earlier check: going offline during
+          // the connect above must not leave a Gemini session running against a
+          // call nobody can answer.
+          const sip = sipRef.current;
+          if (!sip) throw new Error("The bridge went offline before the call could be answered.");
+          sip.answer(outbound);
         } catch (cause) {
           setNotice(
             `${describe(cause, "Could not reach the voice gateway.")} The call was not answered.`,
@@ -443,12 +466,23 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
       const sip = new SipBridge({
         onRegistered: () => dispatch({ type: "registered" }),
         onRegistrationFailed: (message) => {
-          dispatch({ type: "registration_failed", message });
-          // JsSIP would keep retrying behind a UI that says "failed", and the
-          // reducer only accepts `registered` out of `connecting`. Stopping the
-          // UA keeps the two honest: recovery is the operator clicking Go
-          // online again.
           const failed = sipRef.current;
+
+          // JsSIP re-registers on a timer, and a refresh REGISTER can fail
+          // during a call — a PBX blip, a moment of packet loss. Stopping the
+          // UA then would terminate the live session and drop the caller,
+          // which is strictly worse than JsSIP's own retry. The registration
+          // is only worth acting on when there is no call riding on it.
+          if (failed?.hasSession) {
+            setNotice(`${message} The current call is unaffected; JsSIP is retrying.`);
+            return;
+          }
+
+          dispatch({ type: "registration_failed", message });
+          // With no call in flight, JsSIP would keep retrying behind a UI that
+          // says "failed", and the reducer only accepts `registered` out of
+          // `connecting`. Stopping the UA keeps the two honest: recovery is
+          // the operator clicking Go online again.
           sipRef.current = null;
           queueMicrotask(() => void failed?.goOffline());
         },
