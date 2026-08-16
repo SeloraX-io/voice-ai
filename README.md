@@ -41,8 +41,10 @@ GEMINI_API_KEY=your-key-here
 
 **Never** rename it to `NEXT_PUBLIC_GEMINI_API_KEY`. Anything prefixed with
 `NEXT_PUBLIC_` is inlined into the JavaScript bundle and becomes public. The
-only public variable here is `NEXT_PUBLIC_VOICE_GATEWAY_URL`, which is an
-endpoint address, not a credential.
+public variables here are `NEXT_PUBLIC_VOICE_GATEWAY_URL`, an endpoint address
+rather than a credential, and `NEXT_PUBLIC_VOICE_GATEWAY_KEY` — a gateway API
+key that is public by necessity, because the console connects from the browser.
+See [Locking the gateway down](#locking-the-gateway-down).
 
 ### Scripts
 
@@ -373,6 +375,30 @@ as the gateway's start command. Terminate TLS in front of it — browsers on an
 HTTPS page cannot open a plain `ws://` socket.
 
 Nothing is deployed by this repo.
+
+### Locking the gateway down
+
+A deployed gateway is reachable by anyone who finds the port, and every
+connection it accepts opens a Gemini session billed to you. Set
+`VOICE_GATEWAY_REQUIRE_KEY=1` on it and mint a key per client in the console, at
+**API Keys**.
+
+A client presents its key as `Authorization: Bearer <key>`, or — where headers
+cannot be set, which includes every browser `WebSocket` — as `?key=<key>` on the
+gateway URL. The check runs during the HTTP upgrade, so an unauthenticated
+client is refused with a `401` before any session is opened and before anything
+is billed. Only a SHA-256 hash is stored, in `data/api-keys.json`: a key is
+shown once, at mint, and a lost one is replaced rather than recovered. Revoking
+takes effect on the next connection; a call already in progress is left to
+finish.
+
+The console itself is a browser client, so the preview player and the softphone
+bridge need a key too — `NEXT_PUBLIC_VOICE_GATEWAY_KEY`, which as a
+`NEXT_PUBLIC_` variable is readable by anyone who loads the console. Give it its
+own key so it can be revoked on its own.
+
+The switch defaults **off** so a fresh checkout runs with no setup; the gateway
+says which mode it is in on every start.
 
 ---
 

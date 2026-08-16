@@ -4,6 +4,10 @@
  * Accepts a browser WebSocket, opens a matching Gemini Live session and pumps
  * audio between the two in both directions. One connection == one call == one
  * Gemini session; everything is torn down together.
+ *
+ * Because accepting a connection is what starts the spending, the API key is
+ * checked in `verifyClient` — during the upgrade, before the socket exists.
+ * See `upgrade-auth.ts`.
  */
 
 import { randomUUID } from "node:crypto";
@@ -22,6 +26,7 @@ import {
   type TranscriptLine,
 } from "../../lib/call-logs/types";
 import type { SummaryConfig } from "../../lib/agent-config/schema";
+import { apiKeyStore } from "../config/api-key-store";
 import { callLogStore } from "../config/call-log-store";
 import {
   INPUT_SAMPLE_RATE,
@@ -37,6 +42,7 @@ import { configStore } from "../config/store";
 import { GeminiVoiceSession, loadResolvedAgentConfig, type LiveFunctionCall } from "./gemini-session";
 import { summariseCall } from "./summarizer";
 import { executeHttpTool } from "./tool-runner";
+import { apiKeyRequired, authorizeUpgrade, upgradeUrl } from "./upgrade-auth";
 import { EnergyVad } from "./vad";
 
 const HEARTBEAT_MS = 15000;
@@ -137,14 +143,14 @@ interface CallState {
 /**
  * Reads `channel`, `from` and `to` off the upgrade request.
  *
- * `request.url` is only ever the path and query string here (the server
- * never sees a full URL), so a fixed placeholder base is enough to parse it
- * with `URL`. Untrusted network input: `channel` falls back to `"browser"`
- * through `readCallChannel`, and `from`/`to` are bounded and only kept as a
- * pair — a call with one but not the other is treated as having neither.
+ * Parsed with `upgradeUrl`, the same helper the key check uses, so there is one
+ * placeholder base for the query string rather than two. Untrusted network
+ * input: `channel` falls back to `"browser"` through `readCallChannel`, and
+ * `from`/`to` are bounded and only kept as a pair — a call with one but not the
+ * other is treated as having neither.
  */
 function parseCallOrigin(request: IncomingMessage): { channel: CallChannel; phone: CallState["phone"] } {
-  const url = new URL(request.url ?? "", "http://voice-gateway.invalid");
+  const url = upgradeUrl(request);
   const channel = readCallChannel(url.searchParams.get("channel"));
 
   const from = url.searchParams.get("from")?.slice(0, MAX_PHONE_FIELD_CHARS) ?? null;
@@ -199,7 +205,38 @@ export function startVoiceGateway(options: VoiceGatewayOptions): WebSocketServer
   const path = options.path ?? "/voice";
   const log = options.log ?? (() => undefined);
 
-  const wss = new WebSocketServer({ port: options.port, path, maxPayload: MAX_CLIENT_FRAME_BYTES });
+  const wss = new WebSocketServer({
+    port: options.port,
+    path,
+    maxPayload: MAX_CLIENT_FRAME_BYTES,
+    // Runs during the HTTP upgrade: `ws` answers a refusal with a plain HTTP
+    // status and destroys the socket, so `connection` never fires and no Gemini
+    // session — nothing billable at all — is ever opened for a client that
+    // could not present a key.
+    verifyClient: (info, done) => {
+      void authorizeUpgrade(info.req, {
+        requireKey: apiKeyRequired(),
+        verify: (presented) => apiKeyStore.verify(presented),
+      })
+        .then((decision) => {
+          if (decision.ok) {
+            if (decision.key) log("upgrade authorised", { key: decision.key.name });
+            done(true);
+            return;
+          }
+          log("upgrade rejected", {
+            reason: decision.reason,
+            remote: info.req.socket.remoteAddress ?? "unknown",
+          });
+          done(false, decision.status, decision.message);
+        })
+        .catch((cause) => {
+          // Fail closed: if the key cannot be checked, nobody gets a session.
+          log("upgrade check failed", { error: (cause as Error).name });
+          done(false, 500, "Internal Server Error");
+        });
+    },
+  });
 
   wss.on("connection", (socket, request) => {
     void handleConnection(socket, request, log);
