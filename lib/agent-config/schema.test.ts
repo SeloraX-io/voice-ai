@@ -99,3 +99,15 @@ test("stamps the current version regardless of input", () => {
   assert.equal(result.ok, true);
   if (result.ok) assert.equal(result.config.version, 1);
 });
+
+test("a config saved before tools existed still loads, keeping its other fields", () => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- destructured only to drop `tools`
+  const { tools: _tools, ...withoutTools } = DEFAULT_AGENT_CONFIG;
+  const result = validateAgentConfig({ ...withoutTools, instructions: "Keep me." });
+
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.config.instructions, "Keep me.");
+    assert.deepEqual(result.config.tools, { http: [], client: [], webhooks: [] });
+  }
+});

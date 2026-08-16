@@ -15,8 +15,10 @@ import {
   readString,
   type FieldError,
 } from "./validate-helpers";
+import { validateTools, type ToolsConfig } from "./tools";
 
 export type { FieldError } from "./validate-helpers";
+export * from "./tools";
 
 export const AGENT_CONFIG_VERSION = 1;
 
@@ -63,6 +65,7 @@ export interface AgentConfig {
   models: ModelsConfig;
   agentName: string;
   variables: AgentVariable[];
+  tools: ToolsConfig;
   /** Names only. Values live in a separate gitignored file, server-side. */
   secretKeys: string[];
   updatedAt: string;
@@ -261,6 +264,7 @@ export function validateAgentConfig(input: unknown): ValidationResult {
   const welcome = validateWelcome(record.welcome, errors);
   const models = validateModels(record.models, errors);
   const variables = validateVariables(record.variables, errors);
+  const tools = validateTools(record.tools, errors);
 
   if (errors.length > 0) return { ok: false, errors };
 
@@ -274,6 +278,7 @@ export function validateAgentConfig(input: unknown): ValidationResult {
       models,
       agentName,
       variables,
+      tools,
       secretKeys: [],
       updatedAt: new Date().toISOString(),
     },
