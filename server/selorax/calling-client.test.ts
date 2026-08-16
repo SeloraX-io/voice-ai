@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { inspect } from "node:util";
 
 import { createCallingClient, SeloraxError } from "./calling-client";
 
@@ -81,6 +82,22 @@ test("a missing extension is reported as its own cause", async () => {
   assert.equal((error as SeloraxError).code, "extension_not_active");
 });
 
+test("a specific cause wins even when the status is also 401", async () => {
+  // A 401 that also names a known cause should report the specific one —
+  // "your extension is gone" beats "your token is bad" when both are true,
+  // because it points at the fix that actually applies.
+  const { impl } = stub(401, {
+    message: "no active selx-sip extension",
+    code: "extension_not_active",
+    status: 401,
+  });
+  const error = await createCallingClient(CONFIG, impl)
+    .getLine()
+    .catch((cause: unknown) => cause);
+
+  assert.equal((error as SeloraxError).code, "extension_not_active");
+});
+
 test("an unreachable backend is a readable error, not a raw TypeError", async () => {
   const impl = async () => {
     throw new TypeError("fetch failed");
@@ -93,6 +110,27 @@ test("an unreachable backend is a readable error, not a raw TypeError", async ()
   assert.equal((error as SeloraxError).code, "unreachable");
 });
 
+test("a hung backend times out with its own code, not a generic failure", async () => {
+  // Stand in for a fetch that never settles on its own, but honors an abort
+  // signal the way a real fetch honors AbortSignal.timeout. A short signal
+  // here (not the client's real 10s one) keeps the test fast.
+  const impl = async () => {
+    const signal = AbortSignal.timeout(20);
+    await new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason));
+    });
+    throw new Error("unreachable in this test");
+  };
+
+  const error = await createCallingClient(CONFIG, impl)
+    .getLine()
+    .catch((cause: unknown) => cause);
+
+  assert.ok(error instanceof SeloraxError);
+  assert.equal((error as SeloraxError).code, "timeout");
+  assert.match((error as SeloraxError).message, /10 seconds/);
+});
+
 test("never puts the token in an error message", async () => {
   const { impl } = stub(500, { message: "boom" });
   const error = await createCallingClient(CONFIG, impl)
@@ -100,6 +138,23 @@ test("never puts the token in an error message", async () => {
     .catch((cause: unknown) => cause);
 
   assert.ok(!String((error as Error).message).includes("token-abc"));
+});
+
+test("never puts the token anywhere an ordinary log line would render it", async () => {
+  // console.log(err) runs util.inspect under the hood, which prints a
+  // `cause` chain even when `.message` is clean. If the underlying fetch
+  // error's own message ever embedded the token, that must not survive into
+  // this module's error either — the token must never be attached as cause.
+  const impl = async () => {
+    throw new TypeError("fetch failed: token-abc was rejected by the upstream proxy");
+  };
+  const error = await createCallingClient(CONFIG, impl)
+    .getLine()
+    .catch((cause: unknown) => cause);
+
+  assert.ok(error instanceof SeloraxError);
+  const rendered = inspect(error, { depth: null });
+  assert.ok(!rendered.includes("token-abc"), rendered);
 });
 
 test("reports an answered inbound call with the caller's number", async () => {

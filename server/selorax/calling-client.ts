@@ -36,15 +36,25 @@ export type SeloraxErrorCode =
   | "extension_not_active"
   | "calling_disabled"
   | "unreachable"
+  | "timeout"
   | "request_failed";
 
 export class SeloraxError extends Error {
   readonly code: SeloraxErrorCode;
+  /**
+   * The `name` of whatever was thrown underneath, e.g. "TypeError" — never
+   * the thrown error itself. The original error can carry request internals
+   * (or, transitively, the token) into its own `.message`; attaching it as
+   * `cause` would let `console.log`/`util.inspect` print that. A name is
+   * enough to tell a timeout from a DNS failure without that risk.
+   */
+  readonly underlying?: string;
 
-  constructor(code: SeloraxErrorCode, message: string, options?: ErrorOptions) {
-    super(message, options);
+  constructor(code: SeloraxErrorCode, message: string, underlying?: string) {
+    super(message);
     this.name = "SeloraxError";
     this.code = code;
+    this.underlying = underlying;
   }
 }
 
@@ -94,10 +104,25 @@ async function toResponseError(response: Response): Promise<SeloraxError> {
 
 function toClientError(cause: unknown): SeloraxError {
   if (cause instanceof SeloraxError) return cause;
-  if (cause instanceof TypeError) {
-    return new SeloraxError("unreachable", "Could not reach the Selorax calling API.", { cause });
+
+  const name = cause instanceof Error ? cause.name : undefined;
+
+  // AbortSignal.timeout() aborts the fetch with a DOMException named
+  // "TimeoutError" — distinct from a generic connection failure, and worth
+  // its own code so a hung backend reads as "timed out", not "broke".
+  if (name === "TimeoutError") {
+    return new SeloraxError(
+      "timeout",
+      `The Selorax calling API did not respond within ${TIMEOUT_MS / 1000} seconds.`,
+      name,
+    );
   }
-  return new SeloraxError("request_failed", "The Selorax calling API request failed.", { cause });
+
+  if (cause instanceof TypeError) {
+    return new SeloraxError("unreachable", "Could not reach the Selorax calling API.", name);
+  }
+
+  return new SeloraxError("request_failed", "The Selorax calling API request failed.", name);
 }
 
 function toIceServers(value: unknown): SeloraxIceServer[] {
