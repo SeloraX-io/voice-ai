@@ -25,6 +25,12 @@ test("does not route a form-level error", () => {
   assert.equal(routeForPath(""), null);
 });
 
+test("routes tool errors to the actions screen", () => {
+  assert.equal(routeForPath("tools"), "/agent/actions");
+  assert.equal(routeForPath("tools.http.0.name"), "/agent/actions");
+  assert.equal(routeForPath("tools.webhooks.1.events"), "/agent/actions");
+});
+
 test("every configuration route in the nav has a label and a group", () => {
   for (const route of AGENT_ROUTES) {
     assert.ok(route.label.length > 0);

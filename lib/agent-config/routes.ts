@@ -43,5 +43,6 @@ export function routeForPath(path: string): AgentRoute | null {
   if (path === "") return null;
   if (path.startsWith("models")) return "/models-voice";
   if (path.startsWith("agentName") || path.startsWith("variables")) return "/agent/advanced";
+  if (path.startsWith("tools")) return "/agent/actions";
   return "/agent/conversation";
 }
