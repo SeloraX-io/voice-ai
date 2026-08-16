@@ -66,6 +66,44 @@ test("falls back to the defaults on an unknown version", async () => {
   assert.equal(warnings.length, 1);
 });
 
+test("falls back to the defaults when welcome is missing its message", async () => {
+  const dir = await freshDir();
+  const malformed = JSON.stringify({ ...DEFAULT_AGENT_CONFIG, welcome: { enabled: true } });
+  await writeFile(path.join(dir, "agent-config.json"), malformed, "utf8");
+
+  const warnings: string[] = [];
+  const store = createConfigStore(dir, (message) => warnings.push(message));
+  const config = await store.read();
+
+  assert.equal(config.agentName, DEFAULT_AGENT_CONFIG.agentName);
+  assert.equal(config.welcome.enabled, DEFAULT_AGENT_CONFIG.welcome.enabled);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /failed validation/);
+});
+
+test("falls back to the defaults rather than throwing when variables is null", async () => {
+  const dir = await freshDir();
+  const malformed = JSON.stringify({ ...DEFAULT_AGENT_CONFIG, variables: null });
+  await writeFile(path.join(dir, "agent-config.json"), malformed, "utf8");
+
+  const warnings: string[] = [];
+  const store = createConfigStore(dir, (message) => warnings.push(message));
+  const config = await store.read();
+
+  assert.deepEqual(config.variables, DEFAULT_AGENT_CONFIG.variables);
+  assert.equal(warnings.length, 1);
+});
+
+test("a valid stored config round-trips its own updatedAt rather than being restamped", async () => {
+  const dir = await freshDir();
+  const store = createConfigStore(dir);
+  const saved = await store.write({ ...DEFAULT_AGENT_CONFIG, agentName: "sales-bot" });
+
+  const config = await store.read();
+  assert.equal(config.updatedAt, saved.updatedAt);
+  assert.equal(config.agentName, "sales-bot");
+});
+
 test("lists no secret keys before any are set", async () => {
   const store = createConfigStore(await freshDir());
   assert.deepEqual(await store.listSecretKeys(), []);

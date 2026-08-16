@@ -119,6 +119,28 @@ async function handleConnection(
     state.alive = true;
   });
 
+  // Registered before the config load and the Gemini connect (both `await`)
+  // so a disconnect mid-setup is observed instead of silently falling through:
+  // `handleClientFrame` already no-ops while `state.gemini` is null, and the
+  // `state.closed` check right after `create()` handles a close landing here.
+  socket.on("message", (raw: RawData, isBinary: boolean) => {
+    if (isBinary) {
+      send({ type: "error", message: "Binary frames are not supported.", code: "invalid_message", fatal: false });
+      return;
+    }
+    handleClientFrame(raw.toString(), socket, state, send, log);
+  });
+
+  socket.on("close", () => {
+    log("call disconnected", { id: state.id });
+    closeCall(socket, state, 1000, "client disconnected");
+  });
+
+  socket.on("error", (error) => {
+    log("socket error", { id: state.id, error: String(error) });
+    closeCall(socket, state, 1011, "socket error");
+  });
+
   log("call connected", { id: state.id, remote: request.socket.remoteAddress ?? "unknown" });
 
   const agent = await loadResolvedAgentConfig((message) => log(message, { id: state.id }));
@@ -206,29 +228,16 @@ async function handleConnection(
   });
 
   const gemini = state.gemini;
-  if (gemini && agent.welcome.enabled && agent.welcome.message.trim() !== "") {
+  if (
+    gemini &&
+    agent.welcome.enabled &&
+    agent.welcome.message.trim() !== "" &&
+    socket.readyState === socket.OPEN
+  ) {
     state.greetingActive = true;
     state.greetingGuard = setTimeout(endGreeting, GREETING_GUARD_MS);
     gemini.primeGreeting();
   }
-
-  socket.on("message", (raw: RawData, isBinary: boolean) => {
-    if (isBinary) {
-      send({ type: "error", message: "Binary frames are not supported.", code: "invalid_message", fatal: false });
-      return;
-    }
-    handleClientFrame(raw.toString(), socket, state, send, log);
-  });
-
-  socket.on("close", () => {
-    log("call disconnected", { id: state.id });
-    closeCall(socket, state, 1000, "client disconnected");
-  });
-
-  socket.on("error", (error) => {
-    log("socket error", { id: state.id, error: String(error) });
-    closeCall(socket, state, 1011, "socket error");
-  });
 }
 
 function handleClientFrame(
@@ -269,6 +278,13 @@ function handleClientFrame(
       // While an uninterruptible greeting plays, local VAD still drives the UI
       // meters but nothing goes upstream — so server-side VAD never sees a
       // barge-in and the greeting finishes.
+      //
+      // Caveat: `greetingActive` clears on `onTurnComplete`, which fires when
+      // Gemini finishes *generating* the greeting, not when the browser
+      // finishes *playing* it back. So this only protects the greeting while
+      // it is being generated — a caller talking over the tail of played-back
+      // audio still reaches the model. Closing that gap needs a client
+      // playback-drained signal this gateway does not have.
       if (state.greetingActive && !state.allowGreetingInterrupt) {
         updateVad(message.data, state, send);
         return;

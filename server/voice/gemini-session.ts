@@ -17,6 +17,7 @@ import {
   type Session,
 } from "@google/genai";
 
+import { DEFAULT_AGENT_CONFIG } from "../../lib/agent-config/defaults";
 import {
   buildSystemInstruction,
   resolveAgentConfig,
@@ -62,8 +63,15 @@ function getClient(): GoogleGenAI {
 export async function loadResolvedAgentConfig(
   log: StoreLogger = () => {},
 ): Promise<ResolvedAgentConfig> {
-  const store = createConfigStore(path.join(process.cwd(), "data"), log);
-  return resolveAgentConfig(await store.read());
+  try {
+    const store = createConfigStore(path.join(process.cwd(), "data"), log);
+    return resolveAgentConfig(await store.read());
+  } catch (cause) {
+    // Defense in depth: `store.read()` should already never throw, but a call
+    // must connect even if that guarantee is ever violated.
+    log(`loadResolvedAgentConfig failed, using defaults: ${String(cause)}`);
+    return resolveAgentConfig(structuredClone(DEFAULT_AGENT_CONFIG));
+  }
 }
 
 /**

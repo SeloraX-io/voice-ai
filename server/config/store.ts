@@ -15,7 +15,13 @@ import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { DEFAULT_AGENT_CONFIG } from "../../lib/agent-config/defaults";
-import { AGENT_CONFIG_VERSION, LIMITS, SECRET_KEY_RE, type AgentConfig } from "../../lib/agent-config/schema";
+import {
+  AGENT_CONFIG_VERSION,
+  LIMITS,
+  SECRET_KEY_RE,
+  validateAgentConfig,
+  type AgentConfig,
+} from "../../lib/agent-config/schema";
 
 export type StoreLogger = (message: string) => void;
 
@@ -108,7 +114,20 @@ export function createConfigStore(dataDir: string, log: StoreLogger = () => {}):
         return structuredClone(DEFAULT_AGENT_CONFIG);
       }
 
-      return { ...DEFAULT_AGENT_CONFIG, ...record, secretKeys: [] };
+      const result = validateAgentConfig(record);
+      if (!result.ok) {
+        // Left on disk untouched so the user's data stays recoverable.
+        const summary = result.errors.map((error) => error.path || "(root)").join(", ");
+        log(`agent-config.json failed validation (${summary}), using defaults`);
+        return structuredClone(DEFAULT_AGENT_CONFIG);
+      }
+
+      // validateAgentConfig stamps updatedAt with "now"; the stored value is
+      // the truth about when this config was last saved.
+      return {
+        ...result.config,
+        updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : result.config.updatedAt,
+      };
     },
 
     async write(config: AgentConfig): Promise<AgentConfig> {
