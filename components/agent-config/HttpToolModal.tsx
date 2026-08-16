@@ -13,6 +13,11 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { bracedParams, HTTP_METHODS, type HttpTool } from "@/lib/agent-config/tools";
 
+/**
+ * Add/edit form for a single HTTP tool: the definition the agent is given
+ * for calling an API mid-conversation. It only builds the definition — the
+ * gateway does not execute it yet.
+ */
 function blank(): HttpTool {
   return {
     id: crypto.randomUUID(),

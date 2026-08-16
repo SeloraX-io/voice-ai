@@ -11,6 +11,11 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import type { ClientTool } from "@/lib/agent-config/tools";
 
+/**
+ * Add/edit form for a single client tool: the definition the agent is given
+ * for a function that runs in the caller's browser. It only builds the
+ * definition — nothing here executes it.
+ */
 function blank(): ClientTool {
   return {
     id: crypto.randomUUID(),
