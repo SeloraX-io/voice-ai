@@ -13,7 +13,7 @@ interface VoiceOrbProps {
 
 /** Per-state palette. Kept here so every visual state is defined in one place. */
 const PALETTE: Record<VoiceStatus, { from: string; to: string; glow: string }> = {
-  idle: { from: "#4b4b63", to: "#2a2a3a", glow: "rgba(124,92,255,0.18)" },
+  idle: { from: "#c2c5d8", to: "#9296b1", glow: "rgba(124,92,255,0.14)" },
   connecting: { from: "#7c5cff", to: "#4c3bd6", glow: "rgba(124,92,255,0.45)" },
   listening: { from: "#7c5cff", to: "#22d3ee", glow: "rgba(124,92,255,0.55)" },
   thinking: { from: "#8b6bff", to: "#5b3fd8", glow: "rgba(124,92,255,0.5)" },
@@ -122,12 +122,12 @@ export function VoiceOrb({ status, levels }: VoiceOrbProps) {
           status === "thinking" && "[animation:orb-breathe_1.6s_ease-in-out_infinite]",
         )}
         style={{
-          background: `radial-gradient(circle at 32% 28%, ${palette.from}, ${palette.to} 68%, rgba(0,0,0,0.55))`,
-          boxShadow: `0 0 60px -10px ${palette.glow}, inset 0 -14px 30px -12px rgba(0,0,0,0.8)`,
+          background: `radial-gradient(circle at 32% 28%, ${palette.from}, ${palette.to} 68%, rgba(30,32,60,0.35))`,
+          boxShadow: `0 0 60px -10px ${palette.glow}, inset 0 -14px 30px -12px rgba(30,32,60,0.45)`,
         }}
       >
         {/* Specular highlight. */}
-        <div className="absolute left-[22%] top-[16%] size-8 rounded-full bg-white/35 blur-lg" />
+        <div className="absolute left-[22%] top-[16%] size-8 rounded-full bg-white/55 blur-lg" />
       </div>
     </div>
   );

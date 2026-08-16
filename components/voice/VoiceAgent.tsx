@@ -12,7 +12,6 @@ import { Transcript } from "@/components/voice/Transcript";
 import { VoiceControls } from "@/components/voice/VoiceControls";
 import { VoiceOrb } from "@/components/voice/VoiceOrb";
 import { VoiceWaveform } from "@/components/voice/VoiceWaveform";
-import { ThemeToggle } from "@/components/ThemeToggle";
 import { useVoiceSession } from "@/hooks/useVoiceSession";
 import type { VoiceStatus } from "@/lib/gemini/types";
 
@@ -43,7 +42,6 @@ export function VoiceAgent() {
         </div>
 
         <div className="flex items-center gap-1">
-          <ThemeToggle />
           <Button
             variant="ghost"
             size="sm"

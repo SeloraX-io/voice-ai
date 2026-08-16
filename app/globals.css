@@ -1,43 +1,10 @@
 @import "tailwindcss";
 
 /* --------------------------------------------------------------------------
-   Theme tokens. Dark is the default (this is a call-centre console meant to
-   sit on a screen all day); light is opt-in via data-theme on <html>.
+   Theme tokens. The console is light-only.
    -------------------------------------------------------------------------- */
 
-:root,
-:root[data-theme="dark"] {
-  color-scheme: dark;
-
-  --bg: #06060a;
-  --bg-tint-a: rgba(124, 92, 255, 0.16);
-  --bg-tint-b: rgba(34, 211, 238, 0.1);
-
-  --surface: #0a0a11;
-  --surface-2: rgba(255, 255, 255, 0.035);
-  --surface-3: rgba(255, 255, 255, 0.06);
-  --surface-4: rgba(255, 255, 255, 0.1);
-
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.18);
-
-  --text: #f3f3f7;
-  --text-muted: #8e8fa3;
-  --text-dim: #5c5d72;
-
-  --accent: #7c5cff;
-  --accent-2: #22d3ee;
-  --accent-contrast: #ffffff;
-  --accent-glow: rgba(124, 92, 255, 0.55);
-  --accent-soft: rgba(124, 92, 255, 0.14);
-
-  --success: #34d399;
-  --warning: #fbbf24;
-  --danger: #f43f5e;
-  --ring: rgba(124, 92, 255, 0.65);
-}
-
-:root[data-theme="light"] {
+:root {
   color-scheme: light;
 
   --bg: #f4f5fa;
