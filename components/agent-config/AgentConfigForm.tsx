@@ -30,6 +30,24 @@ export function tabForPath(path: string): TabId {
 
 type SaveState = "idle" | "saving" | "saved";
 
+/**
+ * Order-insensitive serialisation for the dirty check.
+ *
+ * A plain JSON.stringify compares key order as well as content, so a tab that
+ * rebuilt a nested object with its keys in a different order would leave the
+ * form stuck showing "Unsaved changes" with nothing to save. Sorting keys at
+ * every level makes the comparison depend on values alone. Array order is
+ * preserved deliberately — reordering variables IS an edit.
+ */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+    a < b ? -1 : a > b ? 1 : 0,
+  );
+  return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(",")}}`;
+}
+
 export function AgentConfigForm({ initialConfig }: { initialConfig: AgentConfig }) {
   const [saved, setSaved] = useState<AgentConfig>(initialConfig);
   const [config, setConfig] = useState<AgentConfig>(initialConfig);
@@ -43,7 +61,7 @@ export function AgentConfigForm({ initialConfig }: { initialConfig: AgentConfig 
   const dirty = useMemo(() => {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars -- destructured only to omit these from the comparison
     const strip = ({ updatedAt: _u, secretKeys: _s, ...rest }: AgentConfig) => rest;
-    return JSON.stringify(strip(config)) !== JSON.stringify(strip(saved));
+    return stableStringify(strip(config)) !== stableStringify(strip(saved));
   }, [config, saved]);
 
   useEffect(() => {
@@ -94,7 +112,17 @@ export function AgentConfigForm({ initialConfig }: { initialConfig: AgentConfig 
       return;
     }
 
-    const next: AgentConfig = await response.json();
+    let next: AgentConfig;
+    try {
+      next = await response.json();
+    } catch {
+      setSaveState("idle");
+      setFormError(
+        "The server sent a response we could not read. Your changes are still here — try saving again.",
+      );
+      return;
+    }
+
     setSaved(next);
     setConfig(next);
     setSaveState("saved");
