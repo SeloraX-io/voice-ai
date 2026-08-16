@@ -14,15 +14,12 @@ import { GoogleGenAI, Type } from "@google/genai";
 
 import { pcm16ToWav, sampleRateFromMimeType } from "@/lib/audio/pcm";
 import {
-  AGENT_VOICE,
   UPLOAD_TTS_MODEL,
   UPLOAD_UNDERSTANDING_MODEL,
   type UploadAnalysis,
 } from "@/lib/gemini/types";
-import {
-  AGENT_LANGUAGE_CODE,
-  CALL_CENTER_SYSTEM_INSTRUCTION,
-} from "@/server/voice/agent-config";
+import { resolveAgentConfig } from "@/lib/agent-config/resolve";
+import { configStore } from "@/server/config/store";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -100,6 +97,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const ai = new GoogleGenAI({ apiKey });
   const startedAt = Date.now();
+  const agent = resolveAgentConfig(await configStore.read());
 
   try {
     const audioBase64 = Buffer.from(await file.arrayBuffer()).toString("base64");
@@ -123,7 +121,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         },
       ],
       config: {
-        systemInstruction: CALL_CENTER_SYSTEM_INSTRUCTION,
+        systemInstruction: agent.instructions,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -160,8 +158,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       config: {
         responseModalities: ["AUDIO"],
         speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: AGENT_VOICE } },
-          languageCode: AGENT_LANGUAGE_CODE,
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: agent.models.voice } },
+          languageCode: agent.models.languageCode,
         },
       },
     });

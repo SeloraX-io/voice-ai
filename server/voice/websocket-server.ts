@@ -12,7 +12,6 @@ import type { IncomingMessage } from "node:http";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 
 import { base64ToPcm16, pcm16Rms } from "../../lib/audio/pcm";
-import { AGENT_VOICE, LIVE_MODEL } from "../../lib/gemini/types";
 import {
   INPUT_SAMPLE_RATE,
   MAX_CLIENT_FRAME_BYTES,
@@ -21,12 +20,14 @@ import {
   type ServerMessage,
   type VoiceErrorCode,
 } from "../../types/voice";
-import { GeminiVoiceSession } from "./gemini-session";
+import { GeminiVoiceSession, loadResolvedAgentConfig } from "./gemini-session";
 import { EnergyVad } from "./vad";
 
 const HEARTBEAT_MS = 15000;
 /** Upstream audio ceiling. 16 kHz PCM16 as base64 is ~43 KB/s; this is ~4x. */
 const MAX_AUDIO_BYTES_PER_SECOND = 200_000;
+/** Belt and braces: a malformed turn must never leave the agent permanently deaf. */
+const GREETING_GUARD_MS = 30_000;
 
 export interface VoiceGatewayOptions {
   port: number;
@@ -46,6 +47,11 @@ interface CallState {
   windowStartedAt: number;
   windowBytes: number;
   closed: boolean;
+  /** True from the greeting primer until that turn completes. */
+  greetingActive: boolean;
+  /** Mirrors the config so the audio path does not re-read it per frame. */
+  allowGreetingInterrupt: boolean;
+  greetingGuard: ReturnType<typeof setTimeout> | null;
 }
 
 export function startVoiceGateway(options: VoiceGatewayOptions): WebSocketServer {
@@ -93,6 +99,9 @@ async function handleConnection(
     windowStartedAt: Date.now(),
     windowBytes: 0,
     closed: false,
+    greetingActive: false,
+    allowGreetingInterrupt: true,
+    greetingGuard: null,
   };
   callStates.set(socket, state);
 
@@ -112,51 +121,68 @@ async function handleConnection(
 
   log("call connected", { id: state.id, remote: request.socket.remoteAddress ?? "unknown" });
 
+  const agent = await loadResolvedAgentConfig((message) => log(message, { id: state.id }));
+  state.allowGreetingInterrupt = agent.welcome.allowInterrupt;
+
+  const endGreeting = () => {
+    if (!state.greetingActive) return;
+    state.greetingActive = false;
+    if (state.greetingGuard) {
+      clearTimeout(state.greetingGuard);
+      state.greetingGuard = null;
+    }
+  };
+
   try {
-    state.gemini = await GeminiVoiceSession.create({
-      onAudio: (data) => {
-        if (!state.assistantSpeaking) {
-          state.assistantSpeaking = true;
-          send({ type: "assistant_started_speaking" });
-        }
-        send({ type: "audio", data, seq: state.audioSeq++ });
-      },
-      onInputTranscript: (text) => send({ type: "transcript", speaker: "user", text, final: false }),
-      onOutputTranscript: (text) =>
-        send({ type: "transcript", speaker: "assistant", text, final: false }),
-      onInterrupted: () => {
-        state.assistantSpeaking = false;
-        send({ type: "interrupted" });
-      },
-      onGenerationComplete: () => {
-        if (state.assistantSpeaking) {
+    state.gemini = await GeminiVoiceSession.create(
+      {
+        onAudio: (data) => {
+          if (!state.assistantSpeaking) {
+            state.assistantSpeaking = true;
+            send({ type: "assistant_started_speaking" });
+          }
+          send({ type: "audio", data, seq: state.audioSeq++ });
+        },
+        onInputTranscript: (text) => send({ type: "transcript", speaker: "user", text, final: false }),
+        onOutputTranscript: (text) =>
+          send({ type: "transcript", speaker: "assistant", text, final: false }),
+        onInterrupted: () => {
+          endGreeting();
           state.assistantSpeaking = false;
-          send({ type: "assistant_stopped_speaking" });
-        }
+          send({ type: "interrupted" });
+        },
+        onGenerationComplete: () => {
+          if (state.assistantSpeaking) {
+            state.assistantSpeaking = false;
+            send({ type: "assistant_stopped_speaking" });
+          }
+        },
+        onTurnComplete: () => {
+          endGreeting();
+          if (state.assistantSpeaking) {
+            state.assistantSpeaking = false;
+            send({ type: "assistant_stopped_speaking" });
+          }
+          send({ type: "turn_complete" });
+        },
+        onError: (message) => {
+          log("gemini error", { id: state.id, message });
+          send({ type: "error", message: "The AI service reported an error.", code: "gemini_error", fatal: false });
+        },
+        onClose: (reason) => {
+          log("gemini closed", { id: state.id, reason });
+          if (state.closed) return;
+          send({
+            type: "error",
+            message: "The AI session ended. Start a new call to continue.",
+            code: "gemini_closed",
+            fatal: true,
+          });
+          closeCall(socket, state, 1000, "gemini session closed");
+        },
       },
-      onTurnComplete: () => {
-        if (state.assistantSpeaking) {
-          state.assistantSpeaking = false;
-          send({ type: "assistant_stopped_speaking" });
-        }
-        send({ type: "turn_complete" });
-      },
-      onError: (message) => {
-        log("gemini error", { id: state.id, message });
-        send({ type: "error", message: "The AI service reported an error.", code: "gemini_error", fatal: false });
-      },
-      onClose: (reason) => {
-        log("gemini closed", { id: state.id, reason });
-        if (state.closed) return;
-        send({
-          type: "error",
-          message: "The AI session ended. Start a new call to continue.",
-          code: "gemini_closed",
-          fatal: true,
-        });
-        closeCall(socket, state, 1000, "gemini session closed");
-      },
-    });
+      agent,
+    );
   } catch (cause) {
     log("gemini connect failed", { id: state.id, error: String(cause) });
     // The upstream message can contain configuration detail — keep it server-side.
@@ -172,12 +198,19 @@ async function handleConnection(
   send({
     type: "session_started",
     sessionId: state.id,
-    model: LIVE_MODEL,
-    voice: AGENT_VOICE,
+    model: agent.models.liveModel,
+    voice: agent.models.voice,
     geminiConnectMs: state.gemini.connectMs,
     inputSampleRate: INPUT_SAMPLE_RATE,
     outputSampleRate: OUTPUT_SAMPLE_RATE,
   });
+
+  const gemini = state.gemini;
+  if (gemini && agent.welcome.enabled && agent.welcome.message.trim() !== "") {
+    state.greetingActive = true;
+    state.greetingGuard = setTimeout(endGreeting, GREETING_GUARD_MS);
+    gemini.primeGreeting();
+  }
 
   socket.on("message", (raw: RawData, isBinary: boolean) => {
     if (isBinary) {
@@ -230,6 +263,14 @@ function handleClientFrame(
           fatal: true,
         });
         closeCall(socket, state, 1008, "rate limited");
+        return;
+      }
+
+      // While an uninterruptible greeting plays, local VAD still drives the UI
+      // meters but nothing goes upstream — so server-side VAD never sees a
+      // barge-in and the greeting finishes.
+      if (state.greetingActive && !state.allowGreetingInterrupt) {
+        updateVad(message.data, state, send);
         return;
       }
 
@@ -292,6 +333,11 @@ function withinRateLimit(state: CallState, bytes: number): boolean {
 function closeCall(socket: WebSocket, state: CallState, code: number, reason: string): void {
   if (state.closed) return;
   state.closed = true;
+
+  if (state.greetingGuard) {
+    clearTimeout(state.greetingGuard);
+    state.greetingGuard = null;
+  }
 
   state.gemini?.close();
   state.gemini = null;

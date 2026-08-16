@@ -6,6 +6,8 @@
  * as it is generated — there is no request/response turn boundary here.
  */
 
+import path from "node:path";
+
 import {
   EndSensitivity,
   GoogleGenAI,
@@ -15,12 +17,12 @@ import {
   type Session,
 } from "@google/genai";
 
-import { AGENT_VOICE, LIVE_MODEL } from "../../lib/gemini/types";
 import {
-  AGENT_LANGUAGE_CODE,
-  CALL_CENTER_SYSTEM_INSTRUCTION,
-  LIVE_GENERATION_SETTINGS,
-} from "./agent-config";
+  buildSystemInstruction,
+  resolveAgentConfig,
+  type ResolvedAgentConfig,
+} from "../../lib/agent-config/resolve";
+import { createConfigStore, type StoreLogger } from "../config/store";
 
 export interface GeminiSessionEvents {
   /** Base64 PCM16 @ 24 kHz, emitted per chunk with zero buffering. */
@@ -50,6 +52,27 @@ function getClient(): GoogleGenAI {
   return client;
 }
 
+/**
+ * Loads and resolves the config for one call. Never throws: a call must connect
+ * even if the config file is missing or unreadable.
+ *
+ * Builds its own store rather than using the shared instance so store problems
+ * reach the gateway's log with the call id attached, instead of vanishing.
+ */
+export async function loadResolvedAgentConfig(
+  log: StoreLogger = () => {},
+): Promise<ResolvedAgentConfig> {
+  const store = createConfigStore(path.join(process.cwd(), "data"), log);
+  return resolveAgentConfig(await store.read());
+}
+
+/**
+ * Sent as the first turn when a welcome message is enabled, because Gemini Live
+ * has no field for "speak first". The text never reaches the customer; it only
+ * hands the model the turn.
+ */
+const GREETING_PRIMER = "The call has just connected. Deliver your opening greeting now.";
+
 export class GeminiVoiceSession {
   private closed = false;
 
@@ -58,35 +81,43 @@ export class GeminiVoiceSession {
     readonly connectMs: number,
   ) {}
 
-  static async create(events: GeminiSessionEvents): Promise<GeminiVoiceSession> {
+  static async create(
+    events: GeminiSessionEvents,
+    agent: ResolvedAgentConfig,
+  ): Promise<GeminiVoiceSession> {
     const startedAt = Date.now();
     const ai = getClient();
 
     const session = await ai.live.connect({
-      model: LIVE_MODEL,
+      model: agent.models.liveModel,
       config: {
         responseModalities: [Modality.AUDIO],
-        systemInstruction: CALL_CENTER_SYSTEM_INSTRUCTION,
-        temperature: LIVE_GENERATION_SETTINGS.temperature,
-        topP: LIVE_GENERATION_SETTINGS.topP,
+        systemInstruction: buildSystemInstruction(agent),
+        temperature: agent.models.temperature,
+        topP: agent.models.topP,
         speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: AGENT_VOICE } },
-          // Pins TTS to Bangla phonetics so the prompt's language rule is not
-          // fighting a synthesiser that defaults to English.
-          languageCode: AGENT_LANGUAGE_CODE,
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: agent.models.voice } },
+          // Pins TTS phonetics so the prompt's language rule is not fighting a
+          // synthesiser that defaults to English.
+          languageCode: agent.models.languageCode,
         },
         // Live transcripts for both sides of the call.
         inputAudioTranscription: {},
         outputAudioTranscription: {},
-        // Server-side VAD owns turn taking and interruption. Tight silence
-        // settings make the agent answer quickly after the customer stops.
+        // Server-side VAD owns turn taking and interruption.
         realtimeInputConfig: {
           automaticActivityDetection: {
             disabled: false,
-            startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_HIGH,
-            endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_HIGH,
-            prefixPaddingMs: 20,
-            silenceDurationMs: 400,
+            startOfSpeechSensitivity:
+              agent.models.vad.startSensitivity === "high"
+                ? StartSensitivity.START_SENSITIVITY_HIGH
+                : StartSensitivity.START_SENSITIVITY_LOW,
+            endOfSpeechSensitivity:
+              agent.models.vad.endSensitivity === "high"
+                ? EndSensitivity.END_SENSITIVITY_HIGH
+                : EndSensitivity.END_SENSITIVITY_LOW,
+            prefixPaddingMs: agent.models.vad.prefixPaddingMs,
+            silenceDurationMs: agent.models.vad.silenceDurationMs,
           },
         },
         // Lets a call run past the raw context limit instead of being dropped.
@@ -104,6 +135,15 @@ export class GeminiVoiceSession {
     });
 
     return new GeminiVoiceSession(session, Date.now() - startedAt);
+  }
+
+  /** Hands the model the first turn so it speaks the configured greeting. */
+  primeGreeting(): void {
+    if (this.closed) return;
+    this.session.sendClientContent({
+      turns: [{ role: "user", parts: [{ text: GREETING_PRIMER }] }],
+      turnComplete: true,
+    });
   }
 
   /** Forwards one microphone chunk. `base64` is PCM16 @ 16 kHz mono. */
