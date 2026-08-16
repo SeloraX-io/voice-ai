@@ -18,6 +18,15 @@
  * cannot lose each other. A corrupt file reads as "no keys", which fails
  * closed — every connection is rejected while enforcement is on — rather than
  * taking the gateway down.
+ *
+ * It is TWO files, though, and that split is load-bearing. The queue only
+ * serialises one process, and two processes use this store: Next mints and
+ * revokes, the gateway verifies. If "when was this key last used" lived beside
+ * the keys, the gateway would be rewriting the whole key file on every accepted
+ * connection — and a revoke landing between that read and that write would be
+ * undone, silently putting a revoked key back. So `api-keys.json` is written
+ * only by mint and revoke, `api-keys-usage.json` only by the stamp, and neither
+ * process ever rewrites the other's file.
  */
 
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
@@ -40,15 +49,17 @@ export type StoreLogger = (message: string) => void;
  */
 const MAX_PRESENTED_CHARS = 256;
 
-/** What is written to disk. The hash never leaves this module. */
+/** What is written to the key file. The hash never leaves this module. */
 interface StoredApiKey {
   id: string;
   name: string;
   /** SHA-256 of the plaintext key, hex encoded. */
   hash: string;
   createdAt: string;
-  lastUsedAt: string | null;
 }
+
+/** The usage file: key id to the ISO time it was last accepted. */
+type UsageMap = Record<string, string>;
 
 export interface ApiKeyStore {
   /** Newest first. Never throws — an unreadable file lists nothing. */
@@ -83,12 +94,12 @@ function sha256(value: string): Buffer {
   return createHash("sha256").update(value, "utf8").digest();
 }
 
-function summarise(record: StoredApiKey): ApiKeySummary {
+function summarise(record: StoredApiKey, lastUsedAt: string | null): ApiKeySummary {
   return {
     id: record.id,
     name: record.name,
     createdAt: record.createdAt,
-    lastUsedAt: record.lastUsedAt,
+    lastUsedAt,
     fingerprint: record.hash.slice(0, FINGERPRINT_CHARS),
   };
 }
@@ -107,6 +118,7 @@ function isStoredKey(value: unknown): value is StoredApiKey {
 
 export function createApiKeyStore(dataDir: string, log: StoreLogger = () => {}): ApiKeyStore {
   const file = path.join(dataDir, "api-keys.json");
+  const usageFile = path.join(dataDir, "api-keys-usage.json");
   const enqueue = createQueue();
 
   async function readAll(): Promise<StoredApiKey[]> {
@@ -124,55 +136,81 @@ export function createApiKeyStore(dataDir: string, log: StoreLogger = () => {}):
       log("api-keys.json is not a list; treating it as no keys");
       return [];
     }
-    const records = parsed.filter(isStoredKey).map((record) => ({
-      ...record,
-      lastUsedAt: typeof record.lastUsedAt === "string" ? record.lastUsedAt : null,
-    }));
+    const records = parsed.filter(isStoredKey);
     if (records.length !== parsed.length) {
       log(`api-keys.json has ${parsed.length - records.length} unusable record(s); ignoring them`);
     }
     return records;
   }
 
-  async function writeAll(records: StoredApiKey[]): Promise<void> {
+  /** Atomic write, used for both files. 0600 for the same reason on each. */
+  async function writeAtomic(target: string, contents: string): Promise<void> {
     await mkdir(dataDir, { recursive: true });
-    const temp = `${file}.${randomUUID()}.tmp`;
+    const temp = `${target}.${randomUUID()}.tmp`;
     try {
       // 0600: hashes are not secrets the way a password is, but they are the
       // only thing standing between a reader and an offline guessing attack.
-      await writeFile(temp, `${JSON.stringify(records, null, 2)}\n`, {
-        encoding: "utf8",
-        mode: 0o600,
-      });
-      await rename(temp, file);
+      await writeFile(temp, contents, { encoding: "utf8", mode: 0o600 });
+      await rename(temp, target);
     } catch (cause) {
       await unlink(temp).catch(() => undefined);
       throw cause;
     }
   }
 
+  async function writeAll(records: StoredApiKey[]): Promise<void> {
+    await writeAtomic(file, `${JSON.stringify(records, null, 2)}\n`);
+  }
+
+  /** Never throws: usage is telemetry, and a broken file is simply no usage. */
+  async function readUsage(): Promise<UsageMap> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await readFile(usageFile, "utf8"));
+    } catch (error) {
+      if (!isMissing(error)) log(`api-keys-usage.json is unreadable (${(error as Error).name})`);
+      return {};
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).filter(
+        ([, value]) => typeof value === "string",
+      ),
+    ) as UsageMap;
+  }
+
   /**
    * Records that a key was just used.
    *
-   * One small write per accepted connection, which is the same order of cost as
-   * the call record written when that connection ends.
+   * Writes the usage file and nothing else. The key file is left strictly
+   * alone: rewriting it here is what would let this undo a revoke made by the
+   * other process (see the note at the top).
+   *
+   * Deliberately never awaited by `verify` either — see the note there.
    */
   async function stamp(id: string, at: string): Promise<void> {
     await enqueue(async () => {
-      const records = await readAll();
-      const index = records.findIndex((record) => record.id === id);
-      if (index === -1) return;
-      records[index] = { ...records[index], lastUsedAt: at };
-      await writeAll(records);
+      const live = new Set((await readAll()).map((record) => record.id));
+      // Revoked between the accept and now: nothing to record.
+      if (!live.has(id)) return;
+
+      const usage = await readUsage();
+      // Entries for keys that no longer exist are dropped as we go, so the file
+      // stays bounded by the number of live keys.
+      const next: UsageMap = { [id]: at };
+      for (const [key, value] of Object.entries(usage)) {
+        if (live.has(key) && key !== id) next[key] = value;
+      }
+      await writeAtomic(usageFile, `${JSON.stringify(next, null, 2)}\n`);
     });
   }
 
   return {
     async list(): Promise<ApiKeySummary[]> {
-      const records = await readAll();
+      const [records, usage] = await Promise.all([readAll(), readUsage()]);
       return records
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-        .map(summarise);
+        .map((record) => summarise(record, usage[record.id] ?? null));
     },
 
     async mint(name: string): Promise<MintedApiKey> {
@@ -188,7 +226,6 @@ export function createApiKeyStore(dataDir: string, log: StoreLogger = () => {}):
         name: clean,
         hash: sha256(key).toString("hex"),
         createdAt: new Date().toISOString(),
-        lastUsedAt: null,
       };
 
       await enqueue(async () => {
@@ -200,7 +237,7 @@ export function createApiKeyStore(dataDir: string, log: StoreLogger = () => {}):
         await writeAll(records);
       });
 
-      return { key, record: summarise(record) };
+      return { key, record: summarise(record, null) };
     },
 
     async verify(presented: string): Promise<ApiKeySummary | null> {
@@ -223,9 +260,18 @@ export function createApiKeyStore(dataDir: string, log: StoreLogger = () => {}):
       }
       if (!matched) return null;
 
+      // `lastUsedAt` is telemetry, not part of the decision, so the write is
+      // fired and forgotten. Awaiting it would let an unwritable data
+      // directory — a read-only mount, a full disk — turn every correct key
+      // into a refused connection and take the phone bridge down with it.
       const lastUsedAt = new Date().toISOString();
-      await stamp(matched.id, lastUsedAt);
-      return summarise({ ...matched, lastUsedAt });
+      void stamp(matched.id, lastUsedAt).catch((cause: unknown) => {
+        // The errno, where there is one — "Error" alone would not tell an
+        // operator that their disk is full or the mount is read-only.
+        const error = cause as NodeJS.ErrnoException;
+        log(`could not record when a key was last used (${error.code ?? error.name})`);
+      });
+      return summarise(matched, lastUsedAt);
     },
 
     async revoke(id: string): Promise<boolean> {

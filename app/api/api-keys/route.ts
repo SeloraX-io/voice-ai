@@ -58,7 +58,14 @@ export async function DELETE(request: Request): Promise<NextResponse> {
   if (id === null || id === "") return badRequest("id", "Which key?");
 
   try {
-    await apiKeyStore.revoke(id);
+    // A revoke that matched nothing is not a revoke: saying 200 would tell a
+    // stale console its key is gone when it is still opening calls.
+    if (!(await apiKeyStore.revoke(id))) {
+      return NextResponse.json(
+        { errors: [{ path: "id", message: "There is no key with that id." }] },
+        { status: 404 },
+      );
+    }
   } catch (cause) {
     console.error("[api-keys] revoke failed:", cause);
     return NextResponse.json(

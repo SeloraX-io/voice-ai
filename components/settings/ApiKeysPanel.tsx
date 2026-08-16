@@ -243,8 +243,10 @@ export function ApiKeysPanel({ initialKeys }: ApiKeysPanelProps) {
           already in progress is left to finish.
         </p>
         <p>
-          Only a hash is stored, in <code className="font-mono">data/api-keys.json</code>. A lost key
-          is re-minted, never recovered.
+          Only a hash is stored, in <code className="font-mono">data/api-keys.json</code>, with
+          last-used times alongside in{" "}
+          <code className="font-mono">data/api-keys-usage.json</code>. A lost key is re-minted,
+          never recovered.
         </p>
       </div>
     </div>

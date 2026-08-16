@@ -390,15 +390,41 @@ client is refused with a `401` before any session is opened and before anything
 is billed. Only a SHA-256 hash is stored, in `data/api-keys.json`: a key is
 shown once, at mint, and a lost one is replaced rather than recovered. Revoking
 takes effect on the next connection; a call already in progress is left to
-finish.
+finish. Last-used times are kept apart, in `data/api-keys-usage.json`, so that
+the gateway writing telemetry can never overwrite a revoke the console just
+made.
 
 The console itself is a browser client, so the preview player and the softphone
-bridge need a key too — `NEXT_PUBLIC_VOICE_GATEWAY_KEY`, which as a
-`NEXT_PUBLIC_` variable is readable by anyone who loads the console. Give it its
-own key so it can be revoked on its own.
+bridge need a key too — `NEXT_PUBLIC_VOICE_GATEWAY_KEY`. Give it its own key so
+it can be revoked on its own.
 
 The switch defaults **off** so a fresh checkout runs with no setup; the gateway
 says which mode it is in on every start.
+
+#### What this does and does not protect
+
+This defends the gateway against **direct exposure of its own port**, which is
+what it was built for. It does not make the deployment safe on its own, because
+the console and `/api/api-keys` are themselves unauthenticated. Anyone who can
+reach the Next app on port 3000 can:
+
+- read `NEXT_PUBLIC_VOICE_GATEWAY_KEY` straight out of the JavaScript bundle —
+  `NEXT_PUBLIC_` variables are inlined at build time — and use it as a gateway
+  client;
+- mint keys of their own;
+- enumerate every key's name, fingerprint, creation date and last use;
+- **revoke every key**, which denies service to the softphone bridge and stops
+  the agent answering the phone.
+
+So today the real trust boundary is "can reach port 3000", not "holds a key".
+Put the console behind authentication, or behind a network that only you can
+reach, before treating gateway keys as a security control.
+
+**Follow-up, when console auth lands:** `NEXT_PUBLIC_VOICE_GATEWAY_KEY` becomes
+a standing bypass of it — a long-lived gateway credential sitting in a public
+bundle, usable by anyone who ever loaded the page. Replace the browser key with
+a short-lived token issued to the signed-in user from an authenticated route,
+and drop the `NEXT_PUBLIC_` variable at the same time.
 
 ---
 
