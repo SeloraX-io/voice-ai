@@ -26,6 +26,7 @@ export const AGENT_ROUTES: readonly NavRoute[] = [
   { href: "/models-voice", label: "Models & Voice", group: null },
   { href: "/upload", label: "Upload Audio", group: null },
   { href: "/calls", label: "Calls", group: null },
+  { href: "/telephony", label: "Telephony", group: null },
 ] as const;
 
 /** Routes that edit the agent configuration, so the save bar belongs on them. */
