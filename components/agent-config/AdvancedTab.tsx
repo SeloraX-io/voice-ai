@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import { KeyRound, Plus, Trash2 } from "lucide-react";
 
-import type { TabProps } from "@/components/agent-config/AgentConfigForm";
+import type { TabProps } from "@/components/agent-config/AgentConfigProvider";
 import { Button } from "@/components/ui/button";
 import { Field, controlClass } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";

@@ -1,6 +1,6 @@
 "use client";
 
-import type { TabProps } from "@/components/agent-config/AgentConfigForm";
+import type { TabProps } from "@/components/agent-config/AgentConfigProvider";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";

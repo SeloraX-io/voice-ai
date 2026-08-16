@@ -5,6 +5,7 @@ import { AlertTriangle, Check, Loader2, MessageSquare, Settings2, Sparkles, Zap 
 
 import { ActionsTab } from "@/components/agent-config/ActionsTab";
 import { AdvancedTab } from "@/components/agent-config/AdvancedTab";
+import type { TabProps } from "@/components/agent-config/AgentConfigProvider";
 import { ConversationTab } from "@/components/agent-config/ConversationTab";
 import { ModelsVoiceTab } from "@/components/agent-config/ModelsVoiceTab";
 import { Button } from "@/components/ui/button";
@@ -12,20 +13,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { AgentConfig, FieldError } from "@/lib/agent-config/schema";
 
 export type TabId = "conversation" | "models" | "actions" | "advanced";
-
-/** Props every tab receives. Kept in one place so the tabs stay interchangeable. */
-export interface TabProps {
-  config: AgentConfig;
-  update: (patch: Partial<AgentConfig>) => void;
-  /**
-   * Secrets save immediately to their own endpoint, so they are not part of the
-   * form's dirty state. Both snapshots move together, which keeps Discard from
-   * reverting a list the server has already changed.
-   */
-  setSecretKeys: (keys: string[]) => void;
-  /** Keyed by the dotted path from the server, e.g. "variables.0.name". */
-  errors: Map<string, string>;
-}
 
 /** Routes a server error to the tab that owns the field, so it can be revealed. */
 export function tabForPath(path: string): TabId {

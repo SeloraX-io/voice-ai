@@ -3,7 +3,7 @@
 import { useRef } from "react";
 import { ClipboardList, MessagesSquare } from "lucide-react";
 
-import type { TabProps } from "@/components/agent-config/AgentConfigForm";
+import type { TabProps } from "@/components/agent-config/AgentConfigProvider";
 import { PromptPreview } from "@/components/agent-config/PromptPreview";
 import { VariableInsertMenu } from "@/components/agent-config/VariableInsertMenu";
 import { Checkbox } from "@/components/ui/checkbox";
