@@ -15,10 +15,17 @@
  * `tokenExpiresInDays` is computed here rather than in the panel so the two
  * renders of a client component either side of hydration cannot disagree about
  * what "now" is.
+ *
+ * `expiringSoon` is computed here too, via `isTokenExpiringSoon` — the same
+ * function `settings/selorax/page.tsx` calls for the settings panel. That
+ * makes it the single source of the 14-day warning threshold; the panel no
+ * longer re-derives its own from `tokenExpiresInDays`, which is floored to
+ * whole days and would otherwise disagree with a raw-millisecond comparison
+ * by up to a day.
  */
 
 import { BridgePanel } from "@/components/telephony/BridgePanel";
-import { isSeloraxConfigured, tokenExpiryMs } from "@/lib/selorax/config";
+import { isSeloraxConfigured, isTokenExpiringSoon, tokenExpiryMs } from "@/lib/selorax/config";
 import { seloraxStore } from "@/server/config/selorax-store";
 import { telephonyStore } from "@/server/config/telephony-store";
 
@@ -45,6 +52,8 @@ export default async function TelephonyPage() {
         tokenExpiresInDays:
           // eslint-disable-next-line react-hooks/purity -- see above
           tokenExpiresAt === null ? null : Math.floor((tokenExpiresAt - Date.now()) / DAY_MS),
+        // eslint-disable-next-line react-hooks/purity -- request-time clock read, see module doc
+        expiringSoon: isTokenExpiringSoon(tokenExpiresAt, Date.now()),
       }}
       directCredentials={credentials}
     />

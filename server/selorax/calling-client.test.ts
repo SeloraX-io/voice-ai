@@ -73,13 +73,28 @@ test("an expired token says so, rather than 'Unauthorized'", async () => {
   assert.match((error as SeloraxError).message, /token/i);
 });
 
-test("a missing extension is reported as its own cause", async () => {
+test("a missing extension is reported as its own cause, in plain language", async () => {
   const { impl } = stub(503, { message: "no active selx-sip extension", code: "extension_not_active", status: 503 });
   const error = await createCallingClient(CONFIG, impl)
     .getLine()
     .catch((cause: unknown) => cause);
 
   assert.equal((error as SeloraxError).code, "extension_not_active");
+  // The reader is an operator, not a Selorax developer: the machine code must
+  // not be the message.
+  assert.match((error as SeloraxError).message, /needs an extension in Selorax/i);
+  assert.ok(!(error as SeloraxError).message.includes("extension_not_active"));
+});
+
+test("calling disabled is reported in plain language, not a machine code", async () => {
+  const { impl } = stub(503, { message: "calling disabled", code: "calling_disabled", status: 503 });
+  const error = await createCallingClient(CONFIG, impl)
+    .getLine()
+    .catch((cause: unknown) => cause);
+
+  assert.equal((error as SeloraxError).code, "calling_disabled");
+  assert.match((error as SeloraxError).message, /calling is disabled/i);
+  assert.ok(!(error as SeloraxError).message.includes("calling_disabled"));
 });
 
 test("a specific cause wins even when the status is also 401", async () => {

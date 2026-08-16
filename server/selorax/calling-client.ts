@@ -66,10 +66,18 @@ export interface CallingClient {
   reportDeclined(callerPhone: string): Promise<void>;
 }
 
-// The passed-through causes Selorax may report on the extension endpoint.
-// Anything else collapses to "request_failed" so this list is not a promise
-// about every code Selorax could ever add.
-const KNOWN_CAUSES: ReadonlySet<string> = new Set(["extension_not_active", "calling_disabled"]);
+// Plain-language messages for the causes Selorax may report on the extension
+// endpoint. The reader is an operator, not a Selorax developer — "Selorax
+// reported: extension_not_active." is a machine code, not an answer; these say
+// what to actually go do, the same way the 401 branch below does. Anything
+// else collapses to "request_failed" so this map is not a promise about every
+// code Selorax could ever add.
+const CAUSE_MESSAGES: Readonly<Record<string, string>> = {
+  extension_not_active:
+    "The AI user needs an extension in Selorax — none is currently active. Provision one for it in Selorax.",
+  calling_disabled:
+    "Calling is disabled for the AI user in Selorax. Ask an operator to enable it.",
+};
 
 /**
  * Turn a non-OK response into a SeloraxError without ever quoting the raw
@@ -85,8 +93,8 @@ async function toResponseError(response: Response): Promise<SeloraxError> {
     // Body was not JSON, or was empty — fall through to a status-based cause.
   }
 
-  if (parsedCode && KNOWN_CAUSES.has(parsedCode)) {
-    return new SeloraxError(parsedCode as SeloraxErrorCode, `Selorax reported: ${parsedCode}.`);
+  if (parsedCode && parsedCode in CAUSE_MESSAGES) {
+    return new SeloraxError(parsedCode as SeloraxErrorCode, CAUSE_MESSAGES[parsedCode]);
   }
 
   if (response.status === 401) {

@@ -144,8 +144,19 @@ async function claimSeloraxLine(): Promise<TelephonyLine> {
  * rejection cannot go unhandled. A caller waiting on this round trip would be
  * a far worse outcome than a call missing from a report — never call this
  * before answering, only alongside or after.
+ *
+ * `mode` gates this to Selorax-sourced lines only. In direct mode there is no
+ * Selorax config, so `/api/telephony/report` has nothing to report against —
+ * without this gate every answer and every decline against a bare PBX fetches
+ * a route that can only fail, logging a `console.error` and spending a round
+ * trip on the answer path for no reason.
  */
-function reportInboundCall(event: "answered" | "declined", callerPhone: string | null): void {
+function reportInboundCall(
+  mode: LineSource["mode"] | null,
+  event: "answered" | "declined",
+  callerPhone: string | null,
+): void {
+  if (mode !== "selorax") return;
   if (!callerPhone) return;
   fetch("/api/telephony/report", {
     method: "POST",
@@ -219,6 +230,13 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
    * come back and register a bridge nobody asked for.
    */
   const onlineIdRef = useRef(0);
+  /**
+   * Mirrors `line`'s mode outside React state, so `handleIncoming` — a stable
+   * callback that must not be recreated per render — can read the active
+   * `LineSource` without a stale closure. Kept in lockstep with every
+   * `setLine` call: set together, cleared together.
+   */
+  const lineModeRef = useRef<LineSource["mode"] | null>(null);
 
   /* ---------------------------------------------------------------------- */
   /* Transcript                                                             */
@@ -456,7 +474,7 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
         // The previous call is still being released. Decline rather than
         // answer into a half-torn-down audio graph.
         sipRef.current?.reject();
-        reportInboundCall("declined", info.from);
+        reportInboundCall(lineModeRef.current, "declined", info.from);
         return;
       }
       answeringRef.current = true;
@@ -507,14 +525,14 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
           sip.answer(outbound);
           // After answering, never before: a caller waiting on this round
           // trip is a worse outcome than a call missing from a report.
-          reportInboundCall("answered", info.from);
+          reportInboundCall(lineModeRef.current, "answered", info.from);
         } catch (cause) {
           setNotice(
             `${describe(cause, "Could not reach the voice gateway.")} The call was not answered.`,
           );
           await teardownCall();
           sipRef.current?.reject();
-          reportInboundCall("declined", info.from);
+          reportInboundCall(lineModeRef.current, "declined", info.from);
           // `reject()` makes JsSIP emit `failed`, which runs the normal ended
           // path; this dispatch is the safety net for a session that had
           // already gone away.
@@ -590,6 +608,7 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
 
       setNotice(null);
       setLine(null);
+      lineModeRef.current = null;
       dispatch({ type: "go_online" });
 
       // The line is claimed before anything is built, and the whole session
@@ -638,6 +657,7 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
           // the status — a card reading "Not registered" above a live-looking
           // extension and media path is a card contradicting itself.
           setLine(null);
+          lineModeRef.current = null;
           // With no call in flight, JsSIP would keep retrying behind a UI that
           // says "failed", and the reducer only accepts `registered` out of
           // `connecting`. Stopping the UA keeps the two honest: recovery is
@@ -652,6 +672,7 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
         onNotice: setNotice,
       });
       sipRef.current = sip;
+      lineModeRef.current = source.mode;
       setLine({
         mode: source.mode,
         extension: claimed.credentials.extension,
@@ -675,6 +696,7 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
       } catch (cause) {
         sipRef.current = null;
         setLine(null);
+        lineModeRef.current = null;
         dispatch({
           type: "registration_failed",
           message: describe(cause, "Could not start the SIP connection."),
@@ -687,6 +709,7 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
   const goOffline = useCallback(async () => {
     onlineIdRef.current += 1;
     setLine(null);
+    lineModeRef.current = null;
     dispatch({ type: "go_offline" });
     const sip = sipRef.current;
     sipRef.current = null;

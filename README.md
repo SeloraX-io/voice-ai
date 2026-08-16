@@ -416,6 +416,21 @@ reach the Next app on port 3000 can:
 - **revoke every key**, which denies service to the softphone bridge and stops
   the agent answering the phone.
 
+The Selorax bridge (see below) proxies a second, more powerful credential
+through the same unauthenticated surface. The proxy design itself is sound —
+the Selorax admin token never reaches the browser, so it cannot be exfiltrated
+and replayed elsewhere, which is exactly what it was built to prevent. But
+proxying a credential from an unauthenticated route grants its authority to
+anyone who can reach the proxy. Anyone who can reach port 3000 can also:
+
+- call `GET /api/telephony/line` to read the AI extension's SIP URI and
+  **plaintext password**, plus its TURN credentials — and re-claim the device
+  on every call, so hitting it repeatedly evicts the AI's own registration;
+- call `POST /api/telephony/report` to write arbitrary `caller_phone` values
+  into a production Selorax call log and its credit accounting;
+- call `PUT /api/selorax` with an all-blank body to wipe a 90-day token the
+  operator cannot re-obtain without an OTP login.
+
 So today the real trust boundary is "can reach port 3000", not "holds a key".
 Put the console behind authentication, or behind a network that only you can
 reach, before treating gateway keys as a security control.

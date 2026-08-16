@@ -24,13 +24,15 @@ export interface SeloraxStatus {
   /** Epoch ms, or null when the token carries no readable expiry. */
   tokenExpiresAt: number | null;
   tokenExpiresInDays: number | null;
+  /**
+   * Computed server-side by `isTokenExpiringSoon`/`TOKEN_EXPIRY_WARNING_MS`
+   * (`lib/selorax/config.ts`) — the same function the Selorax settings panel
+   * calls, so the two genuinely cannot disagree. Do not re-derive this from
+   * `tokenExpiresInDays` here: that value is floored to whole days, which by
+   * itself already disagrees with a raw-millisecond comparison by up to a day.
+   */
+  expiringSoon: boolean;
 }
-
-/**
- * Below this, the token is close enough to lapsing to say so on the page. The
- * same threshold the Selorax settings panel uses, so the two never disagree.
- */
-const EXPIRY_WARNING_DAYS = 14;
 
 interface StatusLook {
   label: string;
@@ -137,8 +139,7 @@ export function BridgePanel({
     ? { mode: "selorax" }
     : { mode: "direct", credentials };
   const canGoOnline = selorax.configured || isConfigured(credentials);
-  const expiringSoon =
-    selorax.tokenExpiresInDays !== null && selorax.tokenExpiresInDays <= EXPIRY_WARNING_DAYS;
+  const expiringSoon = selorax.expiringSoon;
   const activeLine = bridge.line;
 
   return (
