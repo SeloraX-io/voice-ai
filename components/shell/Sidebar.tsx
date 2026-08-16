@@ -95,7 +95,12 @@ export function Sidebar({ onTestAgent, callActive, callSeconds }: SidebarProps) 
         <div className="pt-2">{topLevelItems.map((route) => item(route.href, route.label))}</div>
 
         <div className="mt-auto pt-4">
-          <Button variant="outline" className="w-full" onClick={onTestAgent}>
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={onTestAgent}
+            aria-label={callActive ? "Show the call in progress" : "Test agent"}
+          >
             {callActive ? (
               <>
                 <span className="size-2 rounded-full bg-[var(--success)] [animation:status-pulse_1.6s_ease-in-out_infinite]" />
