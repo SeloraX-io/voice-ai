@@ -3388,7 +3388,13 @@ At `http://localhost:3000/configure`:
 - Type `{nope}` and confirm the amber unknown-token warning appears without blocking Save.
 - Add a secret, reload the page, and confirm the key is listed with `••••••` and no value.
 - Rename `company` to `brand` and confirm the prompt keeps `{company}` and now warns.
-- Delete `brand` and confirm the "used in the instructions" confirmation appears.
+- Delete `brand` and confirm NO confirmation appears — after the rename nothing references
+  `{brand}`, so there is nothing to warn about. (An earlier draft of this plan expected a
+  warning here; that was wrong. The rename deliberately does not rewrite the prompt, which
+  is precisely what leaves `{brand}` unreferenced.)
+- Re-add a variable named `company`, confirm the unknown-token warning clears, then delete
+  it and confirm the "used in the instructions" confirmation DOES appear. That is the path
+  the delete-warning actually protects.
 - Clear the instructions entirely and Save; confirm the error appears under the field and the tab switches to Conversation.
 
 - [ ] **Step 3: Commit**
