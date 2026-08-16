@@ -43,13 +43,16 @@ test("a corrupt file reads as empty rather than throwing", async () => {
 
 test("never logs the contents of a corrupt file", async () => {
   const dir = await freshDir();
-  await writeFile(path.join(dir, "telephony.json"), '{"password":"hunter2" ', "utf8");
+  // The sensitive value must LEAD the file: V8's JSON error message includes the
+  // first part. If buried later, the test silently passes even if implementation
+  // logs error.message instead of error.name.
+  await writeFile(path.join(dir, "telephony.json"), 's3cret-pw', "utf8");
 
   const messages: string[] = [];
   const store = createTelephonyStore(dir, (message) => messages.push(message));
   await store.read();
 
-  assert.ok(!messages.join(" ").includes("hunter2"));
+  assert.ok(!messages.join(" ").includes("s3cret-pw"));
 });
 
 test("concurrent writes leave one coherent result, not a mix", async () => {

@@ -58,13 +58,16 @@ test("a corrupt history reads as empty rather than throwing", async () => {
 
 test("never logs the contents of a corrupt history", async () => {
   const dir = await freshDir();
-  await writeFile(path.join(dir, "call-logs.json"), '[{"id":"secret-ish-value" ', "utf8");
+  // The sensitive value must LEAD the file: V8's JSON error message includes the
+  // first part. If buried later, the test silently passes even if implementation
+  // logs error.message instead of error.name.
+  await writeFile(path.join(dir, "call-logs.json"), 'customer-speech', "utf8");
 
   const messages: string[] = [];
   const store = createCallLogStore(dir, (message) => messages.push(message));
   await store.read();
 
-  assert.ok(!messages.join(" ").includes("secret-ish-value"));
+  assert.ok(!messages.join(" ").includes("customer-speech"));
 });
 
 test("concurrent appends do not lose a record", async () => {
