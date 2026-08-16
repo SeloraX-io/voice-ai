@@ -20,11 +20,19 @@ function formatDate(iso: string | null): string {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
+/** The only field this form has a slot beside. Everything else is form-level. */
+const FIELD_PATHS = new Set(["name"]);
+
 async function errorsFrom(response: Response): Promise<Record<string, string>> {
   const body: unknown = await response.json().catch(() => null);
   const reported = (body as { errors?: FieldError[] } | null)?.errors ?? [];
   if (reported.length === 0) return { "": "The server refused that." };
-  return Object.fromEntries(reported.map((error) => [error.path, error.message]));
+  // A path with no slot — "id" from a revoke, or anything a future route
+  // invents — is folded into the form-level message rather than swallowed. A
+  // refusal the operator cannot see is worse than an ugly one.
+  return Object.fromEntries(
+    reported.map((error) => [FIELD_PATHS.has(error.path) ? error.path : "", error.message]),
+  );
 }
 
 /**
@@ -80,6 +88,12 @@ export function ApiKeysPanel({ initialKeys }: ApiKeysPanelProps) {
       });
       if (!response.ok) {
         setErrors(await errorsFrom(response));
+        // A 404 means the key was already gone — revoked in another tab, or by
+        // hand. Drop the row: the one thing the operator needs to see is that
+        // it really is not there any more.
+        if (response.status === 404) {
+          setKeys((current) => current.filter((entry) => entry.id !== key.id));
+        }
         return;
       }
       const body = (await response.json()) as { keys: ApiKeySummary[] };

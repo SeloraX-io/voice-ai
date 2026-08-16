@@ -62,7 +62,7 @@ export async function DELETE(request: Request): Promise<NextResponse> {
     // stale console its key is gone when it is still opening calls.
     if (!(await apiKeyStore.revoke(id))) {
       return NextResponse.json(
-        { errors: [{ path: "id", message: "There is no key with that id." }] },
+        { errors: [{ path: "id", message: "That key is already gone — nothing was revoked." }] },
         { status: 404 },
       );
     }

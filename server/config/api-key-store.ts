@@ -27,6 +27,18 @@
  * undone, silently putting a revoked key back. So `api-keys.json` is written
  * only by mint and revoke, `api-keys-usage.json` only by the stamp, and neither
  * process ever rewrites the other's file.
+ *
+ * Be precise about what that does and does not buy. It removes cross-FILE
+ * clobbering — a stamp can no longer undo a revoke — and nothing more. Two
+ * processes writing the SAME file still lose each other's updates, because the
+ * queue is in-process and there is no lock: four mints across two writers can
+ * leave two keys. That is tolerable only because of how this runs today, one
+ * gateway and one Next, where each file has exactly one writing process. Run
+ * Next multi-instance against a shared volume and it stops being theoretical:
+ * two consoles minting or revoking together would drop keys, and a dropped
+ * revoke means a revoked key keeps working. Anything like that needs a real
+ * lock or a database — do not read this split as making concurrent writers
+ * safe.
  */
 
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
@@ -136,7 +148,13 @@ export function createApiKeyStore(dataDir: string, log: StoreLogger = () => {}):
       log("api-keys.json is not a list; treating it as no keys");
       return [];
     }
-    const records = parsed.filter(isStoredKey);
+    // Rebuilt field by field rather than passed through, so anything else the
+    // file carries is dropped — including the `lastUsedAt` that older installs
+    // wrote here before usage moved to its own file. The next mint or revoke
+    // then rewrites the file without it.
+    const records = parsed
+      .filter(isStoredKey)
+      .map(({ id, name, hash, createdAt }) => ({ id, name, hash, createdAt }));
     if (records.length !== parsed.length) {
       log(`api-keys.json has ${parsed.length - records.length} unusable record(s); ignoring them`);
     }

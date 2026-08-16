@@ -133,6 +133,34 @@ test("a record with a malformed hash is ignored rather than throwing", async () 
   assert.equal(await store.verify("anything"), null);
 });
 
+test("a key file written before usage moved out is read, and the dead field dropped", async () => {
+  const dir = await freshDir();
+  await writeFile(
+    path.join(dir, "api-keys.json"),
+    JSON.stringify([
+      {
+        id: "old-1",
+        name: "Older install",
+        hash: "a".repeat(64),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        lastUsedAt: "2026-02-02T00:00:00.000Z",
+      },
+    ]),
+    "utf8",
+  );
+  const store = createApiKeyStore(dir);
+
+  // The key still works as a key; its last use is now the usage file's job.
+  const [listed] = await store.list();
+  assert.equal(listed.name, "Older install");
+  assert.equal(listed.lastUsedAt, null);
+
+  // And the next write leaves the stale field behind.
+  await store.mint("New");
+  const stored = JSON.parse(await readFile(path.join(dir, "api-keys.json"), "utf8"));
+  assert.deepEqual(Object.keys(stored[0]).sort(), ["createdAt", "hash", "id", "name"]);
+});
+
 test("a corrupt file reads as no keys", async () => {
   const dir = await freshDir();
   await writeFile(path.join(dir, "api-keys.json"), "{ not json", "utf8");
