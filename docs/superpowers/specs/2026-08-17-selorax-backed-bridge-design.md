@@ -174,6 +174,67 @@ worse outcome than one extra branch.
 
 ---
 
+## 6A. Outbound: the AI places the call
+
+The operating flow is: a call is placed, the customer's phone rings, and the
+**AI** — not a human agent — talks to them. Inbound and outbound both work
+through the same mechanism, because the dashboard's browser-dialling path no
+longer exists: "Old browser-driven path (`ua.call(sip_target)`) is gone"
+(`CallContext.js:1123`). Every call is **originate-driven** — the backend
+originates, selx-sip sends an INVITE to the agent's registered extension, and
+the browser *answers* it. The bridge already answers INVITEs, so the media path
+needs no change at all.
+
+Three things do.
+
+**6A.1 The originate must be made as the AI user.** `POST /api/calling/place`
+originates as `req.user.user_id` and calls `assertActiveCallingDevice({userId,
+storeId, deviceId})` — it refuses to originate from a device that is not the
+extension's current claim holder. So a human clicking "call" in the dashboard
+rings *their* extension, not the AI's. The AI's token from §5 is exactly what
+resolves this: voice-ai proxies `POST /api/telephony/place` → `POST
+/api/calling/place` with the AI's token and device id, and selx-sip rings the
+AI's extension.
+
+For the first version the trigger lives on voice-ai's Telephony page — a number
+field and a Call button — so **no dashboard change is needed at all**. A "Call
+with AI" button in the dashboard is a later addition once the flow is proven,
+and it is the same one request.
+
+The bridge must be online before placing: `assertActiveCallingDevice` requires
+it to hold the device claim. That is the right constraint, not an obstacle —
+you cannot have the AI call someone while the AI is offline.
+
+**6A.2 Ringback must not reach the model.** On outbound the AI's SIP leg is
+answered *before* the customer picks up, so the remote audio during that window
+is ringback tone. The dashboard handles this by muting remote audio while
+`outboundRinging` and unmuting on promotion to `in_call`
+(`CallContext.js:1988-1994`). The bridge has no such state today, so it would
+feed ringback into Gemini as though the customer were speaking — and greet an
+empty line, billing the whole time.
+
+**6A.3 The SIP leg does not say when the customer answered.** The dashboard
+learns it from realtime call events and only then promotes to `in_call`. The
+bridge needs the same fact.
+
+**The fix for 6A.2 and 6A.3 is one decision: on an outbound call, do not open
+the Gemini session until the customer is actually on the line.** Answer the SIP
+leg to accept the bridge, but hold the gateway connection until the call is
+confirmed answered — by polling `GET /api/calling/...` call status through the
+same proxy, or by subscribing to the same realtime events the dashboard uses.
+Nothing is captured and nothing is generated while a phone is ringing, so
+ringback cannot reach the model and no tokens are spent on an unanswered call.
+
+This also means the greeting fires at the right moment on outbound, which is
+the one thing a called customer notices immediately.
+
+**Reporting differs by direction.** An outbound call is already correlated —
+Selorax placed it and holds its `call_id`. Only inbound needs the
+`/inbound-answered` self-report from §6.3. The bridge must therefore know which
+direction it is in, which it does: it placed the outbound one itself.
+
+---
+
 ## 7. Failure modes
 
 | Failure | Behaviour |
@@ -185,6 +246,9 @@ worse outcome than one extra branch.
 | No extension provisioned for the AI user | `extension_not_active` → say plainly that the AI user needs an extension in Selorax. |
 | TURN credentials missing | Register anyway with STUN only, and warn. Matches the dashboard's non-blocking treatment. |
 | Device claim evicted | Surface it. If it happens, the dedicated-user rule was broken. |
+| Outbound: customer never answers | The confirm-answered wait times out, the SIP leg is released, no Gemini session was ever opened, nothing is billed. |
+| Outbound: `place` refused with no free channel | selx-sip `503`s when no outbound channel is available. Report it as "no free line right now", not as a failure of the agent. |
+| Outbound: `place` refused because the bridge is offline | `assertActiveCallingDevice` rejects. Say plainly that the AI must be online first. |
 
 ---
 
@@ -226,8 +290,16 @@ in this repo's test suite may write into a real Selorax store.
    routes. Testable without a browser.
 2. **The bridge uses it.** Fetch on Go online, `pcConfig` from `iceServers`,
    settings form replaced. → **TURN is live; the audio path is properly
-   configured for the first time.**
-3. **Correlation.** `answered` / `declined` reporting, so the AI's calls appear
-   in Selorax alongside human ones.
+   configured for the first time.** Inbound works end to end.
+3. **Outbound.** `POST /api/telephony/place`, the number field on the Telephony
+   page, and the confirm-answered gate before the Gemini session opens (§6A).
+   → **The AI calls a customer and talks to them.**
+4. **Correlation.** `/inbound-answered` and `/inbound-declined` reporting, so
+   inbound AI calls appear in Selorax alongside human ones. Outbound already
+   correlates, since Selorax placed the call.
 
-1 is a prerequisite for 2. 3 is independent and can follow the first call.
+1 gates 2; 2 gates 3. 4 is independent of all of them.
+
+A "Call with AI" button in the SeloraX dashboard is deliberately **not** a
+milestone here. It is one request to the same endpoint, and it should be added
+once the flow is proven rather than built against an unproven one.
