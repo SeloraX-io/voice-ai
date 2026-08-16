@@ -85,13 +85,25 @@ together and torn down together.
 ```
 app/
   page.tsx                          console entry
-  layout.tsx                        theme bootstrap, fonts
-  globals.css                       design tokens (dark + light), keyframes
+  layout.tsx                        fonts
+  globals.css                       design tokens, keyframes
+  configure/page.tsx                agent configuration editor
   api/upload/route.ts               Upload Audio mode (batch, not real-time)
+  api/agent-config/route.ts         GET/PUT the agent configuration
+  api/agent-config/secrets/route.ts write-only secret values
 
 components/
-  ThemeToggle.tsx
-  ui/                               shadcn-style primitives (button, tabs)
+  ui/                               shadcn-style primitives (button, tabs,
+                                     field, input, textarea, select, switch,
+                                     checkbox, dropdown)
+  agent-config/
+    AgentConfigForm.tsx             tabbed form shell, save/load wiring
+    ConversationTab.tsx             prompt, welcome message, conversation type
+    ModelsVoiceTab.tsx              model, voice, language, VAD sensitivity
+    ActionsTab.tsx                  empty state (tool calling not wired up)
+    AdvancedTab.tsx                 custom variables, secrets
+    VariableInsertMenu.tsx          `{variable}` insertion helper
+    PromptPreview.tsx               resolved-prompt preview
   voice/
     VoiceAgent.tsx                  composes the console
     VoiceOrb.tsx                    animated state orb, driven by real levels
@@ -113,14 +125,19 @@ lib/
     pcm.ts                          base64 / PCM16 / WAV (shared both sides)
   websocket/voice-client.ts         browser side of the protocol
   gemini/types.ts                   model ids, voice, status + metric types
+  agent-config/
+    schema.ts                       the config contract + validateAgentConfig
+    defaults.ts                     seed configuration
+    template.ts                     `{variable}` interpolation
+    resolve.ts                      config + variables → resolved prompt
   utils.ts
 
 server/
   index.ts                          gateway process entry
+  config/store.ts                   atomic config + secret persistence
   voice/
     websocket-server.ts             connection lifecycle, validation, routing
     gemini-session.ts               one Gemini Live session per call
-    agent-config.ts                 the call-centre system instruction
     vad.ts                          energy VAD (UI + barge-in hint only)
 
 public/audio-worklet/recorder-processor.js    capture + resample, audio thread
@@ -129,6 +146,20 @@ types/voice.ts                                the wire protocol, shared
 
 `types/voice.ts` is imported by both the browser and the gateway, so the
 protocol cannot drift between them.
+
+---
+
+## Configuring the agent
+
+Open `/configure` in the running app. The editor covers the prompt, the welcome
+message, model and voice settings, custom `{variables}`, and secrets.
+
+Configuration is saved to `data/agent-config.json` and read fresh at the start of
+every call, so a change takes effect on the next call with no restart. A call
+already in progress keeps the settings it started with.
+
+Secret *values* are written to `data/agent-secrets.json` (gitignored, mode 0600)
+and are never sent to the browser.
 
 ---
 

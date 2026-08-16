@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
 import { AlertTriangle, AudioLines, Radio, Settings2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -27,7 +27,6 @@ const HEADLINE: Record<VoiceStatus, string> = {
 
 export function VoiceAgent() {
   const voice = useVoiceSession();
-  const [showSettings, setShowSettings] = useState(false);
 
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col px-5 pb-12">
@@ -42,41 +41,14 @@ export function VoiceAgent() {
         </div>
 
         <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setShowSettings((value) => !value)}
-            aria-expanded={showSettings}
-          >
-            <Settings2 />
-            Settings
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/configure">
+              <Settings2 />
+              Configure agent
+            </Link>
           </Button>
         </div>
       </header>
-
-      {showSettings && (
-        <div className="animate-fade-rise mb-6 rounded-2xl border border-[var(--border)] bg-[var(--surface-2)] p-5 text-sm">
-          <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-dim)]">
-            Session configuration
-          </h2>
-          <dl className="grid gap-x-8 gap-y-2 sm:grid-cols-2">
-            <Setting label="Model" value={voice.session?.model ?? "gemini-3.1-flash-live-preview"} />
-            <Setting label="Voice" value={voice.session?.voice ?? "Kore"} />
-            <Setting label="Capture" value="16 kHz mono PCM16 · 30 ms chunks" />
-            <Setting label="Playback" value="24 kHz mono PCM16 · scheduled" />
-            <Setting label="Turn taking" value="Gemini server-side VAD" />
-            <Setting label="Transport" value="Persistent WebSocket" />
-          </dl>
-          <p className="mt-4 text-xs leading-relaxed text-[var(--text-dim)]">
-            The agent persona and the Gemini API key live on the voice gateway. Nothing sensitive is
-            sent to the browser — edit{" "}
-            <code className="rounded bg-[var(--surface-3)] px-1 py-0.5 font-mono">
-              server/voice/agent-config.ts
-            </code>{" "}
-            to change how the agent behaves.
-          </p>
-        </div>
-      )}
 
       <Tabs defaultValue="live" className="flex flex-1 flex-col">
         <div className="flex justify-center">
@@ -148,15 +120,6 @@ export function VoiceAgent() {
           <AudioUploader />
         </TabsContent>
       </Tabs>
-    </div>
-  );
-}
-
-function Setting({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-4">
-      <dt className="text-[var(--text-muted)]">{label}</dt>
-      <dd className="truncate font-mono text-xs text-[var(--text)]">{value}</dd>
     </div>
   );
 }
