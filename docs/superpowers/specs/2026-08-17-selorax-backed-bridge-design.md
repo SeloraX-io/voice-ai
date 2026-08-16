@@ -174,7 +174,11 @@ worse outcome than one extra branch.
 
 ---
 
-## 6A. Outbound: the AI places the call
+## 6A. Outbound — analysed, deliberately deferred
+
+**Not in scope for implementation.** Inbound ships first. This section is kept
+because the analysis is done and correct, and because two of its findings would
+otherwise be rediscovered the expensive way. Pick it up after inbound works.
 
 The operating flow is: a call is placed, the customer's phone rings, and the
 **AI** — not a human agent — talks to them. Inbound and outbound both work
@@ -291,14 +295,12 @@ in this repo's test suite may write into a real Selorax store.
 2. **The bridge uses it.** Fetch on Go online, `pcConfig` from `iceServers`,
    settings form replaced. → **TURN is live; the audio path is properly
    configured for the first time.** Inbound works end to end.
-3. **Outbound.** `POST /api/telephony/place`, the number field on the Telephony
-   page, and the confirm-answered gate before the Gemini session opens (§6A).
-   → **The AI calls a customer and talks to them.**
-4. **Correlation.** `/inbound-answered` and `/inbound-declined` reporting, so
-   inbound AI calls appear in Selorax alongside human ones. Outbound already
-   correlates, since Selorax placed the call.
+3. **Correlation.** `/inbound-answered` and `/inbound-declined` reporting, so
+   inbound AI calls appear in Selorax alongside human ones.
 
-1 gates 2; 2 gates 3. 4 is independent of all of them.
+1 gates 2. 3 is independent and can follow the first call.
+
+**Outbound (§6A) is deferred** and is not part of this plan.
 
 A "Call with AI" button in the SeloraX dashboard is deliberately **not** a
 milestone here. It is one request to the same endpoint, and it should be added
