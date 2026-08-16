@@ -8,16 +8,18 @@ import type { AgentVariable } from "@/lib/agent-config/schema";
 interface VariableInsertMenuProps {
   variables: AgentVariable[];
   onInsert: (name: string) => void;
+  disabled?: boolean;
 }
 
-export function VariableInsertMenu({ variables, onInsert }: VariableInsertMenuProps) {
+export function VariableInsertMenu({ variables, onInsert, disabled }: VariableInsertMenuProps) {
   return (
     <Dropdown
       trigger={({ toggle }) => (
         <button
           type="button"
           onClick={toggle}
-          className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text)] focus-visible:ring-2 focus-visible:ring-[var(--ring)] outline-none"
+          disabled={disabled}
+          className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text)] focus-visible:ring-2 focus-visible:ring-[var(--ring)] outline-none disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Plus className="size-3.5" />
           Insert variable

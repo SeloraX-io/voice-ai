@@ -43,7 +43,7 @@ export function ConversationTab({ config, update, errors }: TabProps) {
     <div className="flex flex-col gap-9">
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-medium text-[var(--text)]">Type</h2>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div role="radiogroup" aria-label="Conversation type" className="grid gap-3 sm:grid-cols-2">
           <TypeOption
             icon={MessagesSquare}
             title="Open ended"
@@ -123,6 +123,7 @@ export function ConversationTab({ config, update, errors }: TabProps) {
             <div className="flex items-center justify-end">
               <VariableInsertMenu
                 variables={config.variables}
+                disabled={!config.welcome.enabled}
                 onInsert={(name) =>
                   insertAtCaret(welcomeRef.current, config.welcome.message, name, (message) =>
                     update({ welcome: { ...config.welcome, message } }),
@@ -173,6 +174,8 @@ function TypeOption({
 }) {
   return (
     <div
+      role="radio"
+      aria-checked={Boolean(selected)}
       aria-disabled={!selected}
       className={cn(
         "flex gap-3 rounded-2xl border p-4",
