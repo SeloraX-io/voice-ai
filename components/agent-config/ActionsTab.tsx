@@ -125,6 +125,11 @@ export function ActionsTab({ config, update, errors }: TabProps) {
         open={editing?.kind === "http"}
         tool={editing?.kind === "http" ? editing.tool : null}
         errors={errors}
+        pathPrefix={`tools.http.${
+          editing?.kind === "http" && editing.tool
+            ? tools.http.findIndex((item) => item.id === editing.tool!.id)
+            : tools.http.length
+        }`}
         onCancel={() => setEditing(null)}
         onSave={(tool) => {
           patchTools({ http: upsert(tools.http, tool) });
@@ -136,6 +141,11 @@ export function ActionsTab({ config, update, errors }: TabProps) {
         open={editing?.kind === "client"}
         tool={editing?.kind === "client" ? editing.tool : null}
         errors={errors}
+        pathPrefix={`tools.client.${
+          editing?.kind === "client" && editing.tool
+            ? tools.client.findIndex((item) => item.id === editing.tool!.id)
+            : tools.client.length
+        }`}
         onCancel={() => setEditing(null)}
         onSave={(tool) => {
           patchTools({ client: upsert(tools.client, tool) });
@@ -147,6 +157,11 @@ export function ActionsTab({ config, update, errors }: TabProps) {
         open={editing?.kind === "webhook"}
         webhook={editing?.kind === "webhook" ? editing.webhook : null}
         errors={errors}
+        pathPrefix={`tools.webhooks.${
+          editing?.kind === "webhook" && editing.webhook
+            ? tools.webhooks.findIndex((item) => item.id === editing.webhook!.id)
+            : tools.webhooks.length
+        }`}
         onCancel={() => setEditing(null)}
         onSave={(webhook) => {
           patchTools({ webhooks: upsert(tools.webhooks, webhook) });

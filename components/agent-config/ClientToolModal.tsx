@@ -32,12 +32,14 @@ export function ClientToolModal({
   onCancel,
   onSave,
   errors,
+  pathPrefix,
 }: {
   open: boolean;
   tool: ClientTool | null;
   onCancel: () => void;
   onSave: (tool: ClientTool) => void;
   errors: Map<string, string>;
+  pathPrefix: string;
 }) {
   const [draft, setDraft] = useState<ClientTool>(() => tool ?? blank());
 
@@ -45,10 +47,15 @@ export function ClientToolModal({
   // stays mounted between opens, so its draft would otherwise be the last one.
   // Adjusting state during render (rather than in an effect) avoids the extra
   // commit an effect would cost, per https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes.
+  //
+  // `seed` must be updated on EVERY change, including the close — if it is only
+  // written while open, `seed.open` latches true and a re-open with the same
+  // tool (or another Add, where `tool` is null both times) never reseeds, so the
+  // modal reopens holding the previous record's draft AND its id.
   const [seed, setSeed] = useState<{ open: boolean; tool: ClientTool | null }>({ open, tool });
-  if (open && (seed.open !== open || seed.tool !== tool)) {
+  if (seed.open !== open || seed.tool !== tool) {
     setSeed({ open, tool });
-    setDraft(tool ?? blank());
+    if (open) setDraft(tool ?? blank());
   }
 
   const patch = (changes: Partial<ClientTool>) =>
@@ -79,7 +86,7 @@ export function ClientToolModal({
         label="Tool name"
         htmlFor="client-name"
         description="Your page listens for this exact name."
-        error={errors.get("name")}
+        error={errors.get(`${pathPrefix}.name`)}
       >
         <Input
           id="client-name"
@@ -95,7 +102,7 @@ export function ClientToolModal({
         label="When to use it"
         htmlFor="client-desc"
         description="The agent reads this to decide whether to call the tool."
-        error={errors.get("description")}
+        error={errors.get(`${pathPrefix}.description`)}
       >
         <Textarea
           id="client-desc"
@@ -110,7 +117,7 @@ export function ClientToolModal({
         parameters={draft.parameters}
         onChange={(parameters) => patch({ parameters })}
         errors={errors}
-        pathPrefix="parameters"
+        pathPrefix={`${pathPrefix}.parameters`}
       />
 
       {/* A standalone toggle, so not a `Field` — that wrapper exists to pair a

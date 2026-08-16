@@ -56,12 +56,14 @@ export function WebhookModal({
   onCancel,
   onSave,
   errors,
+  pathPrefix,
 }: {
   open: boolean;
   webhook: Webhook | null;
   onCancel: () => void;
   onSave: (webhook: Webhook) => void;
   errors: Map<string, string>;
+  pathPrefix: string;
 }) {
   const [draft, setDraft] = useState<Webhook>(() => webhook ?? blank());
 
@@ -70,10 +72,16 @@ export function WebhookModal({
   // the last one. Adjusting state during render (rather than in an effect)
   // avoids the extra commit an effect would cost, per
   // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes.
+  //
+  // `seed` must be updated on EVERY change, including the close — if it is only
+  // written while open, `seed.open` latches true and a re-open with the same
+  // webhook (or another Add, where `webhook` is null both times) never
+  // reseeds, so the modal reopens holding the previous record's draft AND
+  // its id.
   const [seed, setSeed] = useState<{ open: boolean; webhook: Webhook | null }>({ open, webhook });
-  if (open && (seed.open !== open || seed.webhook !== webhook)) {
+  if (seed.open !== open || seed.webhook !== webhook) {
     setSeed({ open, webhook });
-    setDraft(webhook ?? blank());
+    if (open) setDraft(webhook ?? blank());
   }
 
   const patch = (changes: Partial<Webhook>) => setDraft((current) => ({ ...current, ...changes }));
@@ -99,7 +107,7 @@ export function WebhookModal({
         </>
       }
     >
-      <Field label="Name" htmlFor="hook-name" error={errors.get("name")}>
+      <Field label="Name" htmlFor="hook-name" error={errors.get(`${pathPrefix}.name`)}>
         <Input
           id="hook-name"
           value={draft.name}
@@ -114,7 +122,7 @@ export function WebhookModal({
         label="Description"
         htmlFor="hook-desc"
         description="For your own reference. The agent never reads this — a webhook is fired by an event, not called."
-        error={errors.get("description")}
+        error={errors.get(`${pathPrefix}.description`)}
       >
         <Textarea
           id="hook-desc"
@@ -140,7 +148,7 @@ export function WebhookModal({
           </Select>
         </Field>
 
-        <Field label="URL" htmlFor="hook-url" error={errors.get("url")}>
+        <Field label="URL" htmlFor="hook-url" error={errors.get(`${pathPrefix}.url`)}>
           <Input
             id="hook-url"
             value={draft.url}
@@ -156,7 +164,7 @@ export function WebhookModal({
         label="Send on"
         htmlFor="hook-events"
         description="Which call events post to this endpoint."
-        error={errors.get("events")}
+        error={errors.get(`${pathPrefix}.events`)}
       >
         <div id="hook-events" className="flex flex-wrap gap-4 pt-1">
           {WEBHOOK_EVENTS.map((event) => (
@@ -175,7 +183,7 @@ export function WebhookModal({
         rows={draft.headers}
         onChange={(headers) => patch({ headers })}
         errors={errors}
-        pathPrefix="headers"
+        pathPrefix={`${pathPrefix}.headers`}
         title="Headers"
         description="Write {{SECRET_NAME}} to use a secret from Advanced."
       />
@@ -184,7 +192,7 @@ export function WebhookModal({
         rows={draft.queryParams}
         onChange={(queryParams) => patch({ queryParams })}
         errors={errors}
-        pathPrefix="queryParams"
+        pathPrefix={`${pathPrefix}.queryParams`}
         title="Query parameters"
         description="Appended to the URL."
       />
