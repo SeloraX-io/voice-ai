@@ -3,18 +3,26 @@
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 
+import { useAgentConfig } from "@/components/agent-config/AgentConfigProvider";
 import { SaveBar } from "@/components/agent-config/SaveBar";
+import { PreviewPanel } from "@/components/preview/PreviewPanel";
 import { Sidebar } from "@/components/shell/Sidebar";
+import { useVoiceSession } from "@/hooks/useVoiceSession";
 import { CONFIG_ROUTES } from "@/lib/agent-config/routes";
 
 /**
  * Holds everything that must outlive a route change: the sidebar, the save bar,
- * and (from Task 7) the preview panel with its live call.
+ * and the preview panel with its live call.
  */
 export function ConsoleChrome({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [previewOpen, setPreviewOpen] = useState(false);
   const showSaveBar = CONFIG_ROUTES.includes(pathname);
+
+  const { config } = useAgentConfig();
+  // Held here, above the router, so navigating between screens cannot tear down
+  // an in-flight call.
+  const voice = useVoiceSession();
 
   return (
     <div className="flex min-h-dvh flex-col md:flex-row">
@@ -27,7 +35,13 @@ export function ConsoleChrome({ children }: { children: React.ReactNode }) {
         {showSaveBar && <SaveBar />}
       </div>
 
-      {previewOpen && null /* PreviewPanel arrives in Task 7 */}
+      <PreviewPanel
+        open={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        voice={voice}
+        onStart={() => void voice.start()}
+        agentName={config.agentName}
+      />
     </div>
   );
 }
