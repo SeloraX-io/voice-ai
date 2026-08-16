@@ -342,10 +342,17 @@ test("rejects a SIP URI without the sip: scheme", () => {
   if (!result.ok) assert.equal(result.errors[0].path, "sipUri");
 });
 
-test("reports every missing field at once, not just the first", () => {
+test("an entirely blank form is 'not configured yet', not an error", () => {
+  // This is the state the page starts in; it must not show five red errors
+  // before the operator has typed anything.
   const result = validateSipCredentials({ wsUrl: "", sipUri: "", sipDomain: "", extension: "", password: "" });
+  assert.equal(result.ok, true);
+});
+
+test("reports every missing field at once, not just the first", () => {
+  const result = validateSipCredentials({ ...VALID, sipUri: "", sipDomain: "", extension: "", password: "" });
   assert.equal(result.ok, false);
-  if (!result.ok) assert.equal(result.errors.length, 5);
+  if (!result.ok) assert.equal(result.errors.length, 4);
 });
 
 test("trims surrounding whitespace, which a paste almost always carries", () => {
@@ -1028,7 +1035,12 @@ export class SipBridge {
   answer(mediaStream: MediaStream): void {
     this.session?.answer({
       mediaStream,
-      mediaConstraints: { audio: false, video: false },
+      // audio MUST be true here. JsSIP strips tracks from the supplied stream
+      // when the matching constraint is false (RTCSession.js:442-446), so
+      // `audio: false` would delete the agent's own voice and the caller would
+      // hear nothing. `video: false` is correct — it removes video tracks we
+      // do not have.
+      mediaConstraints: { audio: true, video: false },
       rtcAnswerConstraints: { offerToReceiveAudio: true, offerToReceiveVideo: false },
     });
   }
@@ -1042,7 +1054,7 @@ export class SipBridge {
 }
 ```
 
-Note `mediaConstraints: { audio: false, video: false }` alongside `mediaStream`: JsSIP strips tracks from the supplied stream when a constraint is `false` (`RTCSession.js:442`), so read that block before choosing the values, and confirm on the first call that the agent is actually audible.
+Read `RTCSession.js:440-490` before touching the `answer()` options. Two things live there that decide whether this works at all: the track-stripping block at :442, and the `if (mediaStream) return mediaStream;` at :482 that skips `getUserMedia`. Confirm on the first call that the agent is actually audible to the caller.
 
 - [ ] **Step 3: Wire the hook**
 
