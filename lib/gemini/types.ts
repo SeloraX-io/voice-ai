@@ -5,20 +5,11 @@
  * process environment (see `server/voice/gemini-session.ts`).
  */
 
-/**
- * Live (bidiGenerateContent) model used for the real-time conversation.
- * Verified against `GET /v1beta/models` — it advertises `bidiGenerateContent`.
- */
-export const LIVE_MODEL = "gemini-3.1-flash-live-preview";
-
 /** Model used to transcribe + answer an uploaded recording (non real-time). */
 export const UPLOAD_UNDERSTANDING_MODEL = "gemini-2.5-flash";
 
 /** Model used to synthesise the spoken reply in Upload mode. */
 export const UPLOAD_TTS_MODEL = "gemini-3.1-flash-tts-preview";
-
-/** Prebuilt Gemini voice used for both Live and Upload modes. */
-export const AGENT_VOICE = "Kore";
 
 /** Voice-agent lifecycle, drives every visual state in the console. */
 export type VoiceStatus =

@@ -115,7 +115,7 @@ export async function POST(request: Request): Promise<NextResponse> {
               text:
                 "This is a recording of a customer calling support. " +
                 "Transcribe exactly what the customer says, in whatever language they used. " +
-                "Then write the reply you would speak back to them — the reply must be in Bangla.",
+                "Then write the reply you would speak back to them.",
             },
           ],
         },
@@ -132,8 +132,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             },
             reply: {
               type: Type.STRING,
-              description:
-                "The support agent's spoken reply, written in Bangla. One or two sentences.",
+              description: "The support agent's spoken reply. One or two sentences.",
             },
           },
           required: ["transcript", "reply"],
