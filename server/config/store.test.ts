@@ -109,3 +109,23 @@ test("never leaks a secret value through the config read path", async () => {
   const serialised = JSON.stringify(await store.read());
   assert.ok(!serialised.includes("super-secret-value"));
 });
+
+test("does not lose a secret when writes overlap", async () => {
+  const store = createConfigStore(await freshDir());
+  await Promise.all([
+    store.setSecret("FIRST_KEY", "1"),
+    store.setSecret("SECOND_KEY", "2"),
+    store.setSecret("THIRD_KEY", "3"),
+  ]);
+  assert.deepEqual(await store.listSecretKeys(), ["FIRST_KEY", "SECOND_KEY", "THIRD_KEY"]);
+});
+
+test("returns a fresh object graph on every fallback read", async () => {
+  const store = createConfigStore(await freshDir());
+  const first = await store.read();
+  const second = await store.read();
+  assert.notEqual(first.models, second.models);
+  assert.notEqual(first.models.vad, second.models.vad);
+  assert.notEqual(first.variables, second.variables);
+  assert.deepEqual(first, second);
+});

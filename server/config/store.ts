@@ -33,9 +33,30 @@ function isMissing(error: unknown): boolean {
   return (error as NodeJS.ErrnoException | null)?.code === "ENOENT";
 }
 
+/**
+ * Serialises the secrets read-modify-write cycle. Atomic writes protect a
+ * single write; they do not protect read → mutate → write across two callers,
+ * where the later rename would silently drop the earlier caller's change.
+ *
+ * This is in-process serialization only, which is the right scope here: the
+ * gateway process only ever reads the secrets file, and Next is the sole
+ * writer. It is not a cross-process lock.
+ */
+function createQueue(): <T>(job: () => Promise<T>) => Promise<T> {
+  let tail: Promise<unknown> = Promise.resolve();
+  return <T>(job: () => Promise<T>): Promise<T> => {
+    const run = tail.then(job, job);
+    // Keep the chain alive even when a job rejects, so one failure does not
+    // wedge every later write.
+    tail = run.catch(() => undefined);
+    return run;
+  };
+}
+
 export function createConfigStore(dataDir: string, log: StoreLogger = () => {}): ConfigStore {
   const configPath = path.join(dataDir, "agent-config.json");
   const secretsPath = path.join(dataDir, "agent-secrets.json");
+  const enqueueSecretWrite = createQueue();
 
   async function writeAtomic(target: string, contents: string, mode: number): Promise<void> {
     await mkdir(dataDir, { recursive: true });
@@ -70,18 +91,21 @@ export function createConfigStore(dataDir: string, log: StoreLogger = () => {}):
         if (!isMissing(error)) {
           log(`agent-config.json is unreadable, using defaults: ${String(error)}`);
         }
-        return { ...DEFAULT_AGENT_CONFIG };
+        // A shallow copy would share DEFAULT_AGENT_CONFIG's nested objects
+        // (models, welcome, variables) across every fallback read in this
+        // process; structuredClone gives each caller its own object graph.
+        return structuredClone(DEFAULT_AGENT_CONFIG);
       }
 
       const record = parsed as Partial<AgentConfig> | null;
       if (typeof record !== "object" || record === null) {
         log("agent-config.json is not an object, using defaults");
-        return { ...DEFAULT_AGENT_CONFIG };
+        return structuredClone(DEFAULT_AGENT_CONFIG);
       }
       if (record.version !== AGENT_CONFIG_VERSION) {
         // Left on disk untouched so the user's data stays recoverable.
         log(`agent-config.json has unsupported version ${String(record.version)}, using defaults`);
-        return { ...DEFAULT_AGENT_CONFIG };
+        return structuredClone(DEFAULT_AGENT_CONFIG);
       }
 
       return { ...DEFAULT_AGENT_CONFIG, ...record, secretKeys: [] };
@@ -109,16 +133,20 @@ export function createConfigStore(dataDir: string, log: StoreLogger = () => {}):
       if (value.length > LIMITS.secretValueMax) {
         throw new Error(`Secret value must be at most ${LIMITS.secretValueMax} characters.`);
       }
-      const secrets = await readSecrets();
-      secrets[key] = value;
-      await writeAtomic(secretsPath, `${JSON.stringify(secrets, null, 2)}\n`, 0o600);
+      await enqueueSecretWrite(async () => {
+        const secrets = await readSecrets();
+        secrets[key] = value;
+        await writeAtomic(secretsPath, `${JSON.stringify(secrets, null, 2)}\n`, 0o600);
+      });
     },
 
     async deleteSecret(key: string): Promise<void> {
-      const secrets = await readSecrets();
-      if (!(key in secrets)) return;
-      delete secrets[key];
-      await writeAtomic(secretsPath, `${JSON.stringify(secrets, null, 2)}\n`, 0o600);
+      await enqueueSecretWrite(async () => {
+        const secrets = await readSecrets();
+        if (!(key in secrets)) return;
+        delete secrets[key];
+        await writeAtomic(secretsPath, `${JSON.stringify(secrets, null, 2)}\n`, 0o600);
+      });
     },
   };
 }
