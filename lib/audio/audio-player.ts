@@ -9,6 +9,7 @@
  */
 
 import { createAudioContext } from "./audio-worklet";
+import { remainingPlayoutMs } from "./playout";
 import { OUTPUT_SAMPLE_RATE } from "@/types/voice";
 
 /**
@@ -23,6 +24,13 @@ const DUCK_RAMP_SECONDS = 0.05;
 
 const END_POLL_MS = 60;
 
+/**
+ * Where the agent's voice goes. `"speakers"` is the operator preview;
+ * `"stream"` routes into a `MediaStreamAudioDestinationNode` so the audio can
+ * be handed to a SIP call as its outgoing track instead.
+ */
+export type PlayerOutput = "speakers" | "stream";
+
 export interface AudioPlayerHandlers {
   /** First scheduled sample is about to reach the speakers. */
   onFirstPlayback?: (latencyToSpeakerMs: number) => void;
@@ -35,6 +43,7 @@ export class StreamingAudioPlayer {
   private master: GainNode | null = null;
   private analyser: AnalyserNode | null = null;
   private analyserBuffer: Float32Array<ArrayBuffer> | null = null;
+  private streamDestination: MediaStreamAudioDestinationNode | null = null;
 
   private readonly sources = new Set<AudioBufferSourceNode>();
   private nextStartTime = 0;
@@ -57,10 +66,22 @@ export class StreamingAudioPlayer {
     return Math.max(0, this.nextStartTime - this.context.currentTime);
   }
 
+  /** The agent's voice as a MediaStream, when started in `"stream"` mode. */
+  get outputStream(): MediaStream | null {
+    return this.streamDestination?.stream ?? null;
+  }
+
+  /** Milliseconds of audio still scheduled ahead of the current playhead. */
+  get remainingPlayoutMs(): number {
+    const context = this.context;
+    if (!context) return 0;
+    return remainingPlayoutMs(this.nextStartTime, context.currentTime);
+  }
+
   /**
    * Must be called from a user gesture so the AudioContext starts unsuspended.
    */
-  async start(): Promise<void> {
+  async start(output: PlayerOutput = "speakers"): Promise<void> {
     if (this.context) {
       if (this.context.state === "suspended") await this.context.resume();
       return;
@@ -73,7 +94,16 @@ export class StreamingAudioPlayer {
     analyser.smoothingTimeConstant = 0.6;
 
     master.connect(analyser);
-    analyser.connect(context.destination);
+
+    if (output === "stream") {
+      // A phone call takes the audio as a track, not through the speakers. The
+      // node emits digital silence when idle, which WebRTC encodes happily —
+      // there is no gap-in-the-stream failure mode here.
+      this.streamDestination = context.createMediaStreamDestination();
+      analyser.connect(this.streamDestination);
+    } else {
+      analyser.connect(context.destination);
+    }
 
     if (context.state === "suspended") await context.resume();
 
@@ -189,6 +219,7 @@ export class StreamingAudioPlayer {
     this.analyser = null;
     this.master = null;
     this.analyserBuffer = null;
+    this.streamDestination = null;
 
     if (this.context && this.context.state !== "closed") {
       await this.context.close().catch(() => undefined);
