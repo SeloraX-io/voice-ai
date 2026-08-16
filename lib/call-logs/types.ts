@@ -56,3 +56,19 @@ export interface CallRecord {
   /** The reason the agent gave, when it was the one who hung up. */
   endReason?: string | null;
 }
+
+/**
+ * One tool invocation, as the console shows it while a call is happening.
+ *
+ * Display-only: this is not part of a `CallRecord`, because the log is about
+ * what a call cost, not a blow-by-blow of what it did.
+ */
+export interface ToolActivity {
+  id: string;
+  name: string;
+  /** Silent tools are still shown here — the operator testing the agent should
+   *  see everything it does, even what the caller is never told about. */
+  silent: boolean;
+  status: "running" | "ok" | "failed";
+  durationMs: number | null;
+}

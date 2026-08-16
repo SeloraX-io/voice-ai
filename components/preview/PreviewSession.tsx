@@ -5,6 +5,7 @@ import { AlertTriangle, ChevronRight } from "lucide-react";
 
 import { CallStats } from "@/components/voice/CallStats";
 import { ConnectionStatus } from "@/components/voice/ConnectionStatus";
+import { ToolActivity } from "@/components/preview/ToolActivity";
 import { Transcript } from "@/components/voice/Transcript";
 import { VoiceControls } from "@/components/voice/VoiceControls";
 import { VoiceOrb } from "@/components/voice/VoiceOrb";
@@ -67,6 +68,10 @@ export function PreviewSession({
           <span>{voice.error}</span>
         </p>
       )}
+
+      {/* Above the transcript, because a tool call is the explanation for a gap
+          in it — seeing it after the fact is much less useful. */}
+      <ToolActivity entries={voice.toolActivity} />
 
       <div className="min-h-0 flex-1 overflow-auto">
         <Transcript

@@ -502,6 +502,9 @@ async function runToolCalls(
       state.pendingHangup = true;
       // The greeting gate must not outlive the call it was guarding.
       endGreeting();
+      const endId = call.id ?? randomUUID();
+      send({ type: "tool_call", id: endId, name, silent: false });
+      send({ type: "tool_result", id: endId, ok: true, durationMs: 0 });
       send({ type: "agent_ending_call", reason });
       responses.push({ id: call.id, name, response: { ok: true } });
       continue;
@@ -509,6 +512,9 @@ async function runToolCalls(
 
     const tool = agent.tools.http.find((entry) => entry.name === name);
     if (!tool) {
+      const missingId = call.id ?? randomUUID();
+      send({ type: "tool_call", id: missingId, name, silent: false });
+      send({ type: "tool_result", id: missingId, ok: false, durationMs: 0 });
       responses.push({
         id: call.id,
         name,
@@ -520,8 +526,20 @@ async function runToolCalls(
     // Read once per batch, and only when a tool actually needs them.
     secrets ??= await configStore.resolveSecrets();
 
-    send({ type: "tool_call", name, silent: tool.silent });
+    // A generated id when the model omits one, so the console can still pair
+    // the result with the call it belongs to.
+    const callId = call.id ?? randomUUID();
+    const startedAt = Date.now();
+    send({ type: "tool_call", id: callId, name, silent: tool.silent });
+
     const result = await executeHttpTool(tool, args, secrets);
+
+    send({
+      type: "tool_result",
+      id: callId,
+      ok: result.ok === true,
+      durationMs: Date.now() - startedAt,
+    });
     responses.push({ id: call.id, name, response: result });
   }
 

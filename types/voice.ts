@@ -86,7 +86,13 @@ export type ServerMessage =
    * still reported here because the operator testing the agent should see
    * everything it does, even what the caller is not told about.
    */
-  | { type: "tool_call"; name: string; silent: boolean }
+  | { type: "tool_call"; id: string; name: string; silent: boolean }
+  /**
+   * A tool finished. Paired with `tool_call` by `id` so the console can show a
+   * call in flight and then resolve it, rather than leaving every tool looking
+   * like it is still running.
+   */
+  | { type: "tool_result"; id: string; ok: boolean; durationMs: number }
   /**
    * The model decided to hang up. The call does not end at this instant — the
    * closing line is still being spoken — so this is a notice, not the close.

@@ -289,5 +289,80 @@
     "timeToFirstAudioMs": null,
     "endedBy": "caller",
     "endReason": null
+  },
+  {
+    "id": "4d05b96f-a74c-403b-b9eb-f4ab3e900085",
+    "startedAt": "2026-08-16T13:45:44.403Z",
+    "endedAt": "2026-08-16T13:46:14.409Z",
+    "durationMs": 30006,
+    "model": "gemini-3.1-flash-live-preview",
+    "voice": "Charon",
+    "usage": {
+      "inputTextTokens": 3870,
+      "inputAudioTokens": 259,
+      "outputTextTokens": 0,
+      "outputAudioTokens": 495,
+      "reports": 1
+    },
+    "cost": {
+      "inputUsd": 0.0036795,
+      "outputUsd": 0.00594,
+      "totalUsd": 0.0096195
+    },
+    "turns": 1,
+    "interruptions": 0,
+    "timeToFirstAudioMs": null,
+    "endedBy": "caller",
+    "endReason": null
+  },
+  {
+    "id": "9fb8b280-9fe5-4abe-a1e3-46d89c193f1d",
+    "startedAt": "2026-08-16T13:46:41.989Z",
+    "endedAt": "2026-08-16T13:47:23.995Z",
+    "durationMs": 42006,
+    "model": "gemini-3.1-flash-live-preview",
+    "voice": "Charon",
+    "usage": {
+      "inputTextTokens": 8107,
+      "inputAudioTokens": 1698,
+      "outputTextTokens": 0,
+      "outputAudioTokens": 433,
+      "reports": 3
+    },
+    "cost": {
+      "inputUsd": 0.01117425,
+      "outputUsd": 0.005196,
+      "totalUsd": 0.01637025
+    },
+    "turns": 3,
+    "interruptions": 2,
+    "timeToFirstAudioMs": null,
+    "endedBy": "caller",
+    "endReason": null
+  },
+  {
+    "id": "de675e8c-4cd8-4d25-b362-d1d0cea3bc30",
+    "startedAt": "2026-08-16T13:49:58.822Z",
+    "endedAt": "2026-08-16T13:51:27.239Z",
+    "durationMs": 88417,
+    "model": "gemini-3.1-flash-live-preview",
+    "voice": "Charon",
+    "usage": {
+      "inputTextTokens": 13328,
+      "inputAudioTokens": 5564,
+      "outputTextTokens": 0,
+      "outputAudioTokens": 404,
+      "reports": 6
+    },
+    "cost": {
+      "inputUsd": 0.026688000000000003,
+      "outputUsd": 0.004848,
+      "totalUsd": 0.031536
+    },
+    "turns": 6,
+    "interruptions": 1,
+    "timeToFirstAudioMs": null,
+    "endedBy": "agent",
+    "endReason": "Issue resolved, caller requested to hang up."
   }
 ]
