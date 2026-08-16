@@ -8,6 +8,11 @@
  * needs (SIP session, capture, player, gateway socket), dispatches events into
  * the reducer, and reads `status` back out.
  *
+ * Going online starts by claiming a line: `GET /api/telephony/line` returns the
+ * SIP credentials and the TURN servers together, once per online session. The
+ * ICE servers travel from here into `SipBridge`, which applies them to every
+ * call's peer connection.
+ *
  * Every state change here is driven by an event callback or an explicit user
  * action. Nothing derives state inside an effect: the React Compiler lint rule
  * `react-hooks/set-state-in-effect` forbids it, and the ordering rules between
@@ -22,6 +27,7 @@ import { StreamingAudioPlayer } from "@/lib/audio/audio-player";
 import { base64ToPcm16 } from "@/lib/audio/pcm";
 import type { ToolActivity } from "@/lib/call-logs/types";
 import type { TranscriptEntry } from "@/lib/gemini/types";
+import { countTurnServers, parseLineResponse, type TelephonyLine } from "@/lib/selorax/line";
 import {
   bridgeReducer,
   INITIAL_BRIDGE_STATE,
@@ -39,6 +45,26 @@ import type { ServerMessage, Speaker } from "@/types/voice";
  */
 const MAX_DRAIN_MS = 5000;
 
+/**
+ * Where this online session's line comes from. Derived by the panel from
+ * whether Selorax is configured — never a toggle, because there is exactly one
+ * right answer and an operator picking the wrong one gets a phone that either
+ * will not register or answers with no TURN.
+ */
+export type LineSource =
+  | { mode: "selorax" }
+  | { mode: "direct"; credentials: SipCredentials };
+
+/** The line actually registered with, for display. */
+export interface ActiveLine {
+  mode: LineSource["mode"];
+  extension: string;
+  /** 0 means host candidates only — the pre-TURN behaviour, worth showing. */
+  iceServerCount: number;
+  /** Of those, the ones that can relay. 0 is the failure this task exists to fix. */
+  turnServerCount: number;
+}
+
 export interface SoftphoneBridgeController {
   state: BridgeState;
   transcript: TranscriptEntry[];
@@ -53,7 +79,9 @@ export interface SoftphoneBridgeController {
    * already draws so the bridge reuses the preview's meter unchanged.
    */
   levels: React.RefObject<VoiceLevels>;
-  goOnline: (credentials: SipCredentials) => Promise<void>;
+  /** The line this session registered with. Null while offline. */
+  line: ActiveLine | null;
+  goOnline: (source: LineSource) => Promise<void>;
   goOffline: () => Promise<void>;
   clearTranscript: () => void;
 }
@@ -63,6 +91,45 @@ const nextEntryId = () => `bridge-entry-${++entrySeq}`;
 
 function describe(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message.length > 0 ? cause.message : fallback;
+}
+
+/** The first message out of a route's `{ errors: [{ path, message }] }` body. */
+function firstErrorMessage(body: unknown): string | null {
+  const errors = (body as { errors?: unknown } | null)?.errors;
+  if (!Array.isArray(errors)) return null;
+  const message = (errors[0] as { message?: unknown } | undefined)?.message;
+  return typeof message === "string" && message.length > 0 ? message : null;
+}
+
+/**
+ * Claims this bridge's line — SIP credentials *and* TURN servers — from
+ * Selorax, through the route that holds the admin token.
+ *
+ * Called once per online session and never per call: upstream, `GET
+ * /api/calling/extension` is rate-limited to 5/min per user and re-claims the
+ * device on every hit, so a fetch per call would trip the limiter on a busy
+ * line and churn the claim. The ICE servers it returns are TURN credentials
+ * with a lifetime of hours, which comfortably outlasts one online session.
+ */
+async function claimSeloraxLine(): Promise<TelephonyLine> {
+  let response: Response;
+  try {
+    response = await fetch("/api/telephony/line", { cache: "no-store" });
+  } catch {
+    throw new Error("Could not reach this app's own server to claim the SIP line.");
+  }
+
+  const body: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(
+      firstErrorMessage(body) ??
+        `Selorax would not hand over a SIP line (status ${response.status}).`,
+    );
+  }
+
+  const line = parseLineResponse(body);
+  if (!line) throw new Error("Selorax returned a SIP line with missing fields.");
+  return line;
 }
 
 /**
@@ -92,6 +159,7 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
   const [toolActivity, setToolActivity] = useState<ToolActivity[]>([]);
   const [activeSpeaker, setActiveSpeaker] = useState<Speaker | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [line, setLine] = useState<ActiveLine | null>(null);
 
   const levels = useRef<VoiceLevels>({ user: 0, agent: 0 });
 
@@ -121,6 +189,12 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
   const answeringRef = useRef(false);
   /** Bumped per call, so a deferred hang-up cannot land on the following one. */
   const callIdRef = useRef(0);
+  /**
+   * Bumped per online session. Claiming the line is a round trip, and an
+   * operator can click Go offline during it; without this token the claim would
+   * come back and register a bridge nobody asked for.
+   */
+  const onlineIdRef = useRef(0);
 
   /* ---------------------------------------------------------------------- */
   /* Transcript                                                             */
@@ -481,11 +555,39 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
   /* ---------------------------------------------------------------------- */
 
   const goOnline = useCallback(
-    async (credentials: SipCredentials) => {
+    async (source: LineSource) => {
       if (sipRef.current) return;
+      const onlineId = ++onlineIdRef.current;
 
       setNotice(null);
+      setLine(null);
       dispatch({ type: "go_online" });
+
+      // The line is claimed before anything is built, and the whole session
+      // runs on this one result — including the ICE servers every call's peer
+      // connection is given.
+      let claimed: TelephonyLine;
+      try {
+        claimed =
+          source.mode === "selorax"
+            ? await claimSeloraxLine()
+            : // Direct mode has no source of TURN. Registering with none is the
+              // pre-Selorax behaviour, and the panel says so rather than
+              // pretending the media path is as good.
+              { credentials: source.credentials, iceServers: [] };
+      } catch (cause) {
+        // Deliberately not registering. A bridge that reports "online" with no
+        // line is a phone that rings into nothing, which is worse to debug than
+        // an honest failure.
+        if (onlineIdRef.current !== onlineId) return;
+        dispatch({
+          type: "registration_failed",
+          message: describe(cause, "Could not claim a SIP line."),
+        });
+        return;
+      }
+      // Went offline while the claim was in flight.
+      if (onlineIdRef.current !== onlineId) return;
 
       const sip = new SipBridge({
         onRegistered: () => dispatch({ type: "registered" }),
@@ -517,9 +619,15 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
         onNotice: setNotice,
       });
       sipRef.current = sip;
+      setLine({
+        mode: source.mode,
+        extension: claimed.credentials.extension,
+        iceServerCount: claimed.iceServers.length,
+        turnServerCount: countTurnServers(claimed.iceServers),
+      });
 
       try {
-        await sip.goOnline(credentials);
+        await sip.goOnline(claimed.credentials, { iceServers: claimed.iceServers });
       } catch (cause) {
         sipRef.current = null;
         dispatch({
@@ -532,6 +640,8 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
   );
 
   const goOffline = useCallback(async () => {
+    onlineIdRef.current += 1;
+    setLine(null);
     dispatch({ type: "go_offline" });
     const sip = sipRef.current;
     sipRef.current = null;
@@ -569,6 +679,7 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
     activeSpeaker,
     notice,
     levels,
+    line,
     goOnline,
     goOffline,
     clearTranscript,

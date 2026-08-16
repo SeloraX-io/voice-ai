@@ -45,9 +45,27 @@ function asString(value: unknown): string {
   return typeof value === "string" ? value : String(value);
 }
 
+export interface SipLineOptions {
+  /**
+   * STUN/TURN servers for the call's peer connection. Claimed once per online
+   * session and reused by every call, because the upstream that issues them
+   * rate-limits and re-claims the device on each request.
+   */
+  iceServers?: RTCIceServer[];
+}
+
 export class SipBridge {
   private ua: UA | null = null;
   private session: RTCSession | null = null;
+  /**
+   * Held from `goOnline` until `goOffline`, and read by every `answer()`.
+   *
+   * Null means "let JsSIP decide", which is `{ iceServers: [] }` — host
+   * candidates only (jssip/lib/RTCSession.js:381). That is the pre-TURN
+   * behaviour and is kept deliberately: a call that only works on a flat
+   * network beats refusing to answer the phone at all.
+   */
+  private pcConfig: RTCConfiguration | null = null;
   private peerConnection: RTCPeerConnection | null = null;
   /** Built from the first remote audio track; later tracks are added to it. */
   private remoteStream: MediaStream | null = null;
@@ -60,8 +78,14 @@ export class SipBridge {
     return this.session !== null;
   }
 
-  async goOnline(creds: SipCredentials): Promise<void> {
+  async goOnline(creds: SipCredentials, options: SipLineOptions = {}): Promise<void> {
     if (this.ua) return;
+
+    // An empty list is not the same as no list: `{ iceServers: [] }` and the
+    // absence of a config both mean host candidates only, so either way the
+    // sensible thing is to leave it unset and say so upstream.
+    const iceServers = options.iceServers ?? [];
+    this.pcConfig = iceServers.length > 0 ? { iceServers } : null;
 
     // jssip is published as CommonJS. Bundlers expose `module.exports` as the
     // synthetic `default`, and may or may not also hoist its keys onto the
@@ -115,10 +139,21 @@ export class SipBridge {
    * Answer with our own audio. `mediaStream` makes JsSIP skip getUserMedia
    * entirely (jssip/lib/RTCSession.js:482) — this one option is the whole
    * reason this design works without touching the SIP server.
+   *
+   * `pcConfig` here is the only place the ICE servers can be applied. JsSIP
+   * reads it from *these* options and passes it straight to the
+   * `RTCPeerConnection` constructor (RTCSession.js:381 → :477 → :1364-1365);
+   * `JsSIP.UA` has no `pcConfig` setting at all, and Config.load() copies only
+   * parameters it knows (Config.js:256-273), so setting one there would be
+   * silently dropped. The dashboard sets both (CallContext.js:608, :1296) —
+   * only its per-session one does anything.
    */
   answer(mediaStream: MediaStream): void {
     this.session?.answer({
       mediaStream,
+      // Undefined when no ICE servers were claimed, which is what JsSIP's own
+      // default already is — see `pcConfig` above.
+      ...(this.pcConfig ? { pcConfig: this.pcConfig } : {}),
       // audio MUST be true here. JsSIP strips tracks from the supplied stream
       // when the matching constraint is false (RTCSession.js:442-446), so
       // `audio: false` would delete the agent's own voice and the caller would
@@ -147,6 +182,7 @@ export class SipBridge {
     this.terminate();
     const ua = this.ua;
     this.ua = null;
+    this.pcConfig = null;
     this.clearSession();
     if (!ua) return;
     try {
