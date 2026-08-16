@@ -51,9 +51,18 @@ export async function POST(request: Request): Promise<NextResponse> {
 export async function DELETE(request: Request): Promise<NextResponse> {
   const key = new URL(request.url).searchParams.get("key");
   if (key === null || !SECRET_KEY_RE.test(key)) {
-    return badRequest("key", "Unknown secret.");
+    return badRequest("key", "Not a valid secret key.");
   }
 
-  await configStore.deleteSecret(key);
+  try {
+    await configStore.deleteSecret(key);
+  } catch (cause) {
+    console.error("[agent-config] secret delete failed:", cause);
+    return NextResponse.json(
+      { errors: [{ path: "", message: "Could not delete the secret." }] },
+      { status: 500 },
+    );
+  }
+
   return NextResponse.json({ secretKeys: await configStore.listSecretKeys() });
 }
