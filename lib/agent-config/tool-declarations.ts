@@ -10,6 +10,7 @@
  * wait, and then apologise to the caller for something that was never wired up.
  */
 
+import type { CallChannel } from "../call-logs/channel";
 import type { ClientTool, HttpTool, ToolParameter, ToolsConfig } from "./tools";
 
 /** Matches the SDK's `Schema`, whose `type` is a string enum. */
@@ -98,14 +99,27 @@ function declare(tool: HttpTool | ClientTool): FunctionDeclarationShape {
  *
  * `end_call` is appended last and cannot be shadowed: a configured tool sharing
  * its name is dropped, so hanging up always means hanging up.
+ *
+ * On a `"phone"` channel no configured tool is declared at all. That is a
+ * product decision, not a capability gap: an HTTP tool that takes three seconds
+ * is a pause in a browser preview but dead air on a live line, and the first
+ * phone calls are meant to answer "can the agent hold a conversation" without a
+ * tool call in the way. `end_call` still stands, because hanging up on an
+ * abusive caller is call control rather than a business tool.
  */
 export function toolDeclarations(
   tools: ToolsConfig,
-  options: { canEndCall: boolean },
+  options: { canEndCall: boolean; channel?: CallChannel },
 ): FunctionDeclarationShape[] {
-  const usable = tools.http.filter(
-    (tool) => tool.name !== "" && tool.name !== END_CALL_TOOL_NAME && tool.description.trim() !== "",
-  );
+  // Defaults to the browser, so every existing caller of this function — and
+  // the preview it drives — keeps exactly the tools it has today.
+  const usable =
+    options.channel === "phone"
+      ? []
+      : tools.http.filter(
+          (tool) =>
+            tool.name !== "" && tool.name !== END_CALL_TOOL_NAME && tool.description.trim() !== "",
+        );
 
   const declarations = usable.map(declare);
   if (options.canEndCall) declarations.push(END_CALL_DECLARATION);

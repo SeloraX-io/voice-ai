@@ -72,6 +72,11 @@ function describe(cause: unknown, fallback: string): string {
  * `from`/`to` are whatever the SIP INVITE carried — possibly absent, never
  * validated here. The gateway treats them as opaque, length-bounded strings,
  * so nothing beyond `URLSearchParams`'s own encoding happens to them.
+ *
+ * An absent number is omitted rather than sent as an empty value, and the two
+ * are independent: a caller who withholds their number still tells us which of
+ * our numbers was dialled, and the gateway records whichever of the pair it is
+ * given.
  */
 function phoneGatewayUrl(from: string | null, to: string | null): string {
   const url = new URL(resolveGatewayUrl());

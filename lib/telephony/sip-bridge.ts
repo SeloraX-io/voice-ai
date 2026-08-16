@@ -51,7 +51,7 @@ export class SipBridge {
   private peerConnection: RTCPeerConnection | null = null;
   /** Built from the first remote audio track; later tracks are added to it. */
   private remoteStream: MediaStream | null = null;
-  /** `ended` and `failed` can both fire for one call. The shell sees one. */
+  /** `ended`, `failed` and the ICE watchdog can all fire for one call. The shell sees one. */
   private endedEmitted = false;
 
   constructor(private readonly handlers: SipBridgeHandlers) {}
@@ -190,15 +190,8 @@ export class SipBridge {
     this.endedEmitted = false;
     this.remoteStream = null;
 
-    const finish = () => {
-      if (this.endedEmitted) return;
-      this.endedEmitted = true;
-      this.clearSession();
-      this.handlers.onEnded();
-    };
-
-    session.on("ended", finish);
-    session.on("failed", finish);
+    session.on("ended", () => this.finishSession());
+    session.on("failed", () => this.finishSession());
 
     // Subscribed here rather than after answer(): JsSIP emits this while
     // building the peer connection inside answer(), so a later subscription
@@ -228,7 +221,52 @@ export class SipBridge {
     pc.addEventListener("track", (trackEvent) => {
       this.offerTrack(trackEvent.track);
     });
+
+    // Media death without a BYE. If ICE fails mid-call — a NAT rebinding, the
+    // far end vanishing, a network change — SIP signalling is none the wiser:
+    // no `ended`, no `failed`, and the gateway keeps its Gemini session open
+    // and billing while the caller hears silence. These two events are the
+    // only notice the browser gives.
+    //
+    // `disconnected` is deliberately not handled: it is the transient state
+    // ICE enters on a few lost packets and recovers from on its own, so acting
+    // on it would hang up on a caller who walked between two cell towers.
+    const watchdog = () => {
+      if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "closed") {
+        this.handleMediaFailure(pc);
+        return;
+      }
+      if (pc.connectionState === "failed" || pc.connectionState === "closed") {
+        this.handleMediaFailure(pc);
+      }
+    };
+    pc.addEventListener("iceconnectionstatechange", watchdog);
+    pc.addEventListener("connectionstatechange", watchdog);
+
     this.collectReceivers();
+  }
+
+  /**
+   * The media path died. Send a BYE so the far end is released, then end the
+   * call through the very same path a normal hang-up takes — teardown stays
+   * single-pathed, and `finishSession` is idempotent, so it does not matter
+   * whether `terminate()` already made JsSIP emit `ended` first.
+   */
+  private handleMediaFailure(pc: RTCPeerConnection): void {
+    // A peer connection from a call that has already been cleared away. Its
+    // states go to `closed` as it is torn down and mean nothing to the call
+    // running now.
+    if (this.peerConnection !== pc) return;
+    this.terminate();
+    this.finishSession();
+  }
+
+  /** Emits `onEnded` exactly once per call, however the call came to an end. */
+  private finishSession(): void {
+    if (this.endedEmitted) return;
+    this.endedEmitted = true;
+    this.clearSession();
+    this.handlers.onEnded();
   }
 
   private collectReceivers(): void {

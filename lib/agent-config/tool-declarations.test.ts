@@ -118,6 +118,44 @@ test("a configured tool cannot shadow end_call", () => {
   assert.equal(endCalls[0].description.includes("End the phone call"), true);
 });
 
+/* --- phone calls declare no tools ------------------------------------- */
+
+test("a phone call is offered end_call and nothing else", () => {
+  const declared = toolDeclarations(
+    tools({
+      http: [httpTool(), httpTool({ id: "t2", name: "refund", description: "Issue a refund." })],
+      client: [
+        { id: "c", name: "open_page", description: "Show a page.", parameters: [], awaitResult: true },
+      ],
+    }),
+    { canEndCall: true, channel: "phone" },
+  );
+
+  assert.deepEqual(
+    declared.map((entry) => entry.name),
+    [END_CALL_TOOL_NAME],
+  );
+});
+
+test("a phone call with hang-up disabled is offered nothing at all", () => {
+  assert.deepEqual(
+    toolDeclarations(tools({ http: [httpTool()] }), { canEndCall: false, channel: "phone" }),
+    [],
+  );
+});
+
+test("the browser channel is unchanged, named or defaulted", () => {
+  const configured = tools({ http: [httpTool()] });
+  const withChannel = toolDeclarations(configured, { canEndCall: true, channel: "browser" });
+  const withoutChannel = toolDeclarations(configured, { canEndCall: true });
+
+  assert.deepEqual(
+    withChannel.map((entry) => entry.name),
+    ["check_order", END_CALL_TOOL_NAME],
+  );
+  assert.deepEqual(withoutChannel, withChannel);
+});
+
 test("end_call is dropped from the list even when hang-up is disabled", () => {
   const declared = toolDeclarations(
     tools({ http: [httpTool({ name: END_CALL_TOOL_NAME, description: "Impostor." })] }),

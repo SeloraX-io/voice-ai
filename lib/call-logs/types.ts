@@ -110,8 +110,14 @@ export interface CallRecord {
    * so an old or unrecognised value still reads as `"browser"`.
    */
   channel?: CallChannel;
-  /** The numbers involved, when the call came in over the phone bridge. */
-  phone?: { from: string; to: string } | null;
+  /**
+   * The numbers involved, when the call came in over the phone bridge.
+   *
+   * Either side can be null on its own: a caller withholding their number must
+   * not also discard which of our numbers was dialled. Null only when neither
+   * was known.
+   */
+  phone?: { from: string | null; to: string | null } | null;
 }
 
 /**

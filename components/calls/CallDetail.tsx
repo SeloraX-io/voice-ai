@@ -37,6 +37,21 @@ function stamp(ms: number): string {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
+/**
+ * "from X to Y" for a phone call, with either half allowed to be missing.
+ *
+ * A withheld caller ID is ordinary, and it does not stop the dialled number
+ * being worth showing — so each side is rendered on its own merits, and only a
+ * call with neither number says nothing at all.
+ */
+function numbers(phone: CallRecord["phone"]): string {
+  if (!phone) return "";
+  const parts = [phone.from ? `from ${phone.from}` : "", phone.to ? `to ${phone.to}` : ""].filter(
+    (part) => part !== "",
+  );
+  return parts.length === 0 ? "" : ` · ${parts.join(" ")}`;
+}
+
 export function CallDetail({ call }: { call: CallRecord }) {
   const transcript = call.transcript ?? [];
   const events = call.events ?? [];
@@ -72,7 +87,7 @@ export function CallDetail({ call }: { call: CallRecord }) {
           {stamp(call.durationMs)} · {call.turns} turn{call.turns === 1 ? "" : "s"} ·{" "}
           {ENDED_LABEL[call.endedBy]}
           {call.endReason ? ` — “${call.endReason}”` : ""}
-          {call.phone ? ` · from ${call.phone.from}` : ""}
+          {numbers(call.phone)}
         </p>
       </div>
 

@@ -42,7 +42,12 @@ import { configStore } from "../config/store";
 import { GeminiVoiceSession, loadResolvedAgentConfig, type LiveFunctionCall } from "./gemini-session";
 import { summariseCall } from "./summarizer";
 import { executeHttpTool } from "./tool-runner";
-import { apiKeyRequired, authorizeUpgrade, upgradeUrl } from "./upgrade-auth";
+import {
+  apiKeyRequired,
+  authorizeUpgrade,
+  upgradeUrl,
+  type UpgradeRequestLike,
+} from "./upgrade-auth";
 import { EnergyVad } from "./vad";
 
 const HEARTBEAT_MS = 15000;
@@ -61,6 +66,24 @@ const GREETING_GUARD_MS = 30_000;
  * leaves dead air, and two seconds is the compromise.
  */
 const HANGUP_GRACE_MS = 2_000;
+
+/**
+ * Hard ceiling on one call, counted from the moment the socket is accepted.
+ *
+ * **This is a cost ceiling, not a product limit.** Every open connection holds
+ * a live Gemini session that bills by the second, and every path that ends a
+ * call normally — the caller hanging up, the agent hanging up, the media path
+ * failing — depends on something outside this process still working. This
+ * timer depends on nothing: it is the backstop for the failure mode nobody
+ * predicted, where a session would otherwise run until Gemini's own limit with
+ * no one on the line.
+ *
+ * Thirty minutes is far longer than any conversation this agent is built for
+ * (support calls run single-digit minutes), so a real caller will never meet
+ * it, while a wedged session costs tens of cents rather than tens of dollars.
+ * Raise it if a legitimate call is ever cut off — do not remove it.
+ */
+const MAX_CALL_DURATION_MS = 30 * 60 * 1_000;
 
 /**
  * Ceiling on `from`/`to` as carried in the connection query string.
@@ -95,6 +118,8 @@ interface CallState {
   /** Mirrors the config so the audio path does not re-read it per frame. */
   allowGreetingInterrupt: boolean;
   greetingGuard: ReturnType<typeof setTimeout> | null;
+  /** The `MAX_CALL_DURATION_MS` backstop. Armed on connect, cleared on close. */
+  durationGuard: ReturnType<typeof setTimeout> | null;
 
   /* --- what this call cost, accumulated as Gemini reports it --- */
   readonly startedAt: number;
@@ -109,7 +134,7 @@ interface CallState {
   logged: boolean;
   /** The model asked to hang up; the call ends when it stops speaking. */
   pendingHangup: boolean;
-  /** The reason the model gave, recorded in the call log. */
+  /** Why the call ended — the model's own reason, or the duration guard's. */
   endReason: string | null;
   /** The conversation, coalesced from streamed fragments. */
   transcript: TranscriptLine[];
@@ -133,11 +158,14 @@ interface CallState {
    * Which surface opened this connection, and the numbers involved.
    *
    * Read once from the upgrade request's query string in `handleConnection`
-   * and never touched again — the preview player sends neither parameter, so
+   * and never written again — the preview player sends neither parameter, so
    * these default to a browser call with no numbers.
+   *
+   * `channel` is not only recorded: it also decides the tool set handed to
+   * Gemini, because a phone call declares no HTTP tools.
    */
   readonly channel: CallChannel;
-  readonly phone: { from: string; to: string } | null;
+  readonly phone: { from: string | null; to: string | null } | null;
 }
 
 /**
@@ -146,16 +174,22 @@ interface CallState {
  * Parsed with `upgradeUrl`, the same helper the key check uses, so there is one
  * placeholder base for the query string rather than two. Untrusted network
  * input: `channel` falls back to `"browser"` through `readCallChannel`, and
- * `from`/`to` are bounded and only kept as a pair — a call with one but not the
- * other is treated as having neither.
+ * `from`/`to` are bounded.
+ *
+ * Either number stands on its own. A withheld caller ID is common and must not
+ * also throw away which of our numbers was dialled, which is why `phone` is
+ * null only when neither parameter was sent.
  */
-function parseCallOrigin(request: IncomingMessage): { channel: CallChannel; phone: CallState["phone"] } {
+export function parseCallOrigin(request: UpgradeRequestLike): {
+  channel: CallChannel;
+  phone: CallState["phone"];
+} {
   const url = upgradeUrl(request);
   const channel = readCallChannel(url.searchParams.get("channel"));
 
   const from = url.searchParams.get("from")?.slice(0, MAX_PHONE_FIELD_CHARS) ?? null;
   const to = url.searchParams.get("to")?.slice(0, MAX_PHONE_FIELD_CHARS) ?? null;
-  const phone = from !== null && to !== null ? { from, to } : null;
+  const phone = from !== null || to !== null ? { from, to } : null;
 
   return { channel, phone };
 }
@@ -281,6 +315,7 @@ async function handleConnection(
     greetingActive: false,
     allowGreetingInterrupt: true,
     greetingGuard: null,
+    durationGuard: null,
     startedAt: Date.now(),
     usage: { ...EMPTY_USAGE },
     model: "",
@@ -300,6 +335,20 @@ async function handleConnection(
     phone,
   };
   callStates.set(socket, state);
+
+  // Armed here rather than after the Gemini session is up, so a connection that
+  // wedges anywhere during setup is covered too. `unref` keeps a half-hour timer
+  // from holding the process open across a restart; the shutdown path closes
+  // live calls itself.
+  state.durationGuard = setTimeout(() => {
+    state.durationGuard = null;
+    log("call hit the maximum duration", { id: state.id, ms: MAX_CALL_DURATION_MS });
+    note(state, "error", "the call hit the maximum duration and was ended");
+    // Only when the model has not already given its own reason.
+    state.endReason ??= "the call hit the maximum duration";
+    closeCall(socket, state, 1000, "maximum call duration");
+  }, MAX_CALL_DURATION_MS);
+  state.durationGuard.unref?.();
 
   const send = (message: ServerMessage) => {
     if (socket.readyState !== socket.OPEN) return;
@@ -431,6 +480,8 @@ async function handleConnection(
         },
       },
       agent,
+      // Decides the tool set: a phone call is offered `end_call` only.
+      state.channel,
     );
   } catch (cause) {
     log("gemini connect failed", { id: state.id, error: String(cause) });
@@ -755,6 +806,11 @@ function closeCall(socket: WebSocket, state: CallState, code: number, reason: st
   if (state.greetingGuard) {
     clearTimeout(state.greetingGuard);
     state.greetingGuard = null;
+  }
+
+  if (state.durationGuard) {
+    clearTimeout(state.durationGuard);
+    state.durationGuard = null;
   }
 
   state.gemini?.close();

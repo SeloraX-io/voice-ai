@@ -25,6 +25,7 @@ import {
   type ResolvedAgentConfig,
 } from "../../lib/agent-config/resolve";
 import { toolDeclarations } from "../../lib/agent-config/tool-declarations";
+import type { CallChannel } from "../../lib/call-logs/channel";
 import type { UsageReport } from "../../lib/call-logs/pricing";
 import { createConfigStore, type StoreLogger } from "../config/store";
 
@@ -106,14 +107,21 @@ export class GeminiVoiceSession {
     readonly connectMs: number,
   ) {}
 
+  /**
+   * `channel` decides which tools the model is offered — a phone call gets
+   * `end_call` and nothing else. Defaults to `"browser"` so the preview, and
+   * any caller that does not know about channels, is unaffected.
+   */
   static async create(
     events: GeminiSessionEvents,
     agent: ResolvedAgentConfig,
+    channel: CallChannel = "browser",
   ): Promise<GeminiVoiceSession> {
     const startedAt = Date.now();
     const ai = getClient();
     const declarations = toolDeclarations(agent.tools, {
       canEndCall: agent.callEnding.enabled && agent.callEnding.policy.trim() !== "",
+      channel,
     });
 
     const session = await ai.live.connect({
