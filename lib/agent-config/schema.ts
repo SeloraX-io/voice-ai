@@ -7,6 +7,17 @@
  * calls it again on the raw body. The server never trusts the client's copy.
  */
 
+import {
+  asRecord,
+  readBoolean,
+  readEnum,
+  readNumber,
+  readString,
+  type FieldError,
+} from "./validate-helpers";
+
+export type { FieldError } from "./validate-helpers";
+
 export const AGENT_CONFIG_VERSION = 1;
 
 export type ConversationType = "open_ended" | "data_collection";
@@ -57,12 +68,6 @@ export interface AgentConfig {
   updatedAt: string;
 }
 
-export interface FieldError {
-  /** Dotted path, e.g. "variables.0.name". Empty string means the whole body. */
-  path: string;
-  message: string;
-}
-
 export type ValidationResult =
   | { ok: true; config: AgentConfig }
   | { ok: false; errors: FieldError[] };
@@ -87,64 +92,6 @@ export const SECRET_KEY_RE = /^[A-Z][A-Z0-9_]*$/;
 
 const VARIABLE_TYPES: readonly VariableType[] = ["string", "number", "boolean"];
 const SENSITIVITIES: readonly VadSensitivity[] = ["high", "low"];
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
-}
-
-function readString(
-  value: unknown,
-  path: string,
-  errors: FieldError[],
-  fallback: string,
-): string {
-  if (typeof value !== "string") {
-    errors.push({ path, message: "Must be text." });
-    return fallback;
-  }
-  return value;
-}
-
-function readBoolean(value: unknown, path: string, errors: FieldError[]): boolean {
-  if (typeof value !== "boolean") {
-    errors.push({ path, message: "Must be true or false." });
-    return false;
-  }
-  return value;
-}
-
-function readNumber(
-  value: unknown,
-  path: string,
-  range: { min: number; max: number },
-  errors: FieldError[],
-  fallback: number,
-): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    errors.push({ path, message: "Must be a number." });
-    return fallback;
-  }
-  if (value < range.min || value > range.max) {
-    errors.push({ path, message: `Must be between ${range.min} and ${range.max}.` });
-    return fallback;
-  }
-  return value;
-}
-
-function readEnum<T extends string>(
-  value: unknown,
-  path: string,
-  allowed: readonly T[],
-  errors: FieldError[],
-  fallback: T,
-): T {
-  if (typeof value !== "string" || !allowed.includes(value as T)) {
-    errors.push({ path, message: `Must be one of: ${allowed.join(", ")}.` });
-    return fallback;
-  }
-  return value as T;
-}
 
 function validateVariables(value: unknown, errors: FieldError[]): AgentVariable[] {
   if (value === undefined) return [];
