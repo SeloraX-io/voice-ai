@@ -605,6 +605,10 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
           }
 
           dispatch({ type: "registration_failed", message });
+          // Nothing is registered any more, so the line details must go with
+          // the status — a card reading "Not registered" above a live-looking
+          // extension and media path is a card contradicting itself.
+          setLine(null);
           // With no call in flight, JsSIP would keep retrying behind a UI that
           // says "failed", and the reducer only accepts `registered` out of
           // `connecting`. Stopping the UA keeps the two honest: recovery is
@@ -628,8 +632,20 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
 
       try {
         await sip.goOnline(claimed.credentials, { iceServers: claimed.iceServers });
+
+        // The same race one layer in, and the narrower window that predates the
+        // line claim: `SipBridge.goOnline` awaits the jssip import before it
+        // builds the UA, so a Go offline or an unmount can land late enough to
+        // find nothing to stop and early enough for the UA to start after it.
+        // Stopping it here is the only remaining chance to.
+        if (onlineIdRef.current !== onlineId) {
+          if (sipRef.current === sip) sipRef.current = null;
+          await sip.goOffline();
+          return;
+        }
       } catch (cause) {
         sipRef.current = null;
+        setLine(null);
         dispatch({
           type: "registration_failed",
           message: describe(cause, "Could not start the SIP connection."),
@@ -658,6 +674,14 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
   // open gateway socket and two AudioContexts behind.
   useEffect(() => {
     return () => {
+      // Retires the online session before anything else, because the dangerous
+      // case is the one where there is nothing here to stop yet: an unmount
+      // during the line claim finds `sipRef` still null, and without this the
+      // claim would resolve afterwards, pass the guard in `goOnline` and
+      // REGISTER a UA that this cleanup has already run past. Nothing could
+      // then stop it, and an INVITE would be answered into an unmounted tree —
+      // a billed Gemini session behind a UI that no longer exists.
+      onlineIdRef.current += 1;
       if (drainTimerRef.current !== null) clearTimeout(drainTimerRef.current);
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
       const sip = sipRef.current;
