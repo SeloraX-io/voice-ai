@@ -28,15 +28,32 @@ Everything below follows from that split.
 
 Three reasons, in the order they matter.
 
-**The bridge currently has no ICE configuration.** `lib/telephony/sip-bridge.ts`
-sets no `pcConfig`, so JsSIP falls back to a single public STUN server. That is
-the exact failure the dashboard already diagnosed and fixed — STUN-only ICE
-fails behind symmetric NAT and restrictive firewalls, producing one-way or
-missing call audio (`SeloraX-Backend/routers/calling.js:317-330`, and the
-dashboard's own `docs/plans/2026-07-30-calling-audio-fix.md`). `GET
-/api/calling/extension` returns short-lived TURN credentials alongside the SIP
-line. **This is a correctness fix, not a convenience.** If the first live call
-has bad audio, this is the first thing to suspect.
+**The bridge currently has no ICE configuration, and this is worse than
+"STUN-only".** `lib/telephony/sip-bridge.ts` sets no `pcConfig`. An earlier
+draft of this section said JsSIP then falls back to a public STUN server; that
+was wrong, and the correction matters. Verified against the installed library:
+`node_modules/jssip/lib/RTCSession.js:381` defaults `pcConfig` to
+`{ iceServers: [] }`, and **`stun:` appears nowhere in jssip's source at all**.
+The public STUN server is the *dashboard's* own `PC_CONFIG` constant
+(`CallContext.js:141`), not a library default.
+
+So every call the bridge has ever made was built with **host candidates only**
+— it could work on a shared LAN and nowhere else. Symmetric NAT and
+restrictive firewalls are not the failure boundary; leaving the subnet is.
+
+`GET /api/calling/extension` returns short-lived TURN credentials alongside the
+SIP line (`SeloraX-Backend/routers/calling.js:317-330`, and the dashboard's own
+`docs/plans/2026-07-30-calling-audio-fix.md`). **This is a correctness fix, not
+a convenience.** If a first live call has bad or missing audio, this is the
+first thing to suspect.
+
+One note for the dashboard team, found while confirming the above: `pcConfig`
+is not a `JsSIP.UA` parameter — it appears nowhere in jssip's `Config.js` or
+`UA.js`, and `Config.load()` drops unknown keys silently. The dashboard's
+UA-level `pcConfig` (`CallContext.js:608`) is therefore a no-op. **The
+dashboard is not broken** — its per-session `pcConfig` at `:1296` and `:1495`
+does the real work — but that line is dead and reads as though it were load
+bearing.
 
 **Calls currently do not correlate.** selx-sip's inbound webhook never says
 which extension answered — its `extension` field is always null for inbound
