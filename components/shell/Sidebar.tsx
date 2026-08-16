@@ -8,6 +8,7 @@ import { AudioLines, Menu, Play, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AGENT_ROUTES } from "@/lib/agent-config/routes";
 import { cn } from "@/lib/utils";
+import { useNavGuard } from "@/components/shell/DirtyNavGuard";
 
 function formatElapsed(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
@@ -24,6 +25,7 @@ interface SidebarProps {
 export function Sidebar({ onTestAgent, callActive, callSeconds }: SidebarProps) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const mayNavigate = useNavGuard();
 
   const agentItems = AGENT_ROUTES.filter((route) => route.group === "agent");
   const topLevelItems = AGENT_ROUTES.filter((route) => route.group === null);
@@ -32,7 +34,13 @@ export function Sidebar({ onTestAgent, callActive, callSeconds }: SidebarProps) 
     <Link
       key={href}
       href={href}
-      onClick={() => setOpen(false)}
+      onClick={(event) => {
+        if (!mayNavigate(href)) {
+          event.preventDefault();
+          return;
+        }
+        setOpen(false);
+      }}
       aria-current={pathname === href ? "page" : undefined}
       className={cn(
         "block rounded-lg px-3 py-2 text-sm transition-colors",
