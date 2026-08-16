@@ -167,3 +167,54 @@ test("returns a fresh object graph on every fallback read", async () => {
   assert.notEqual(first.variables, second.variables);
   assert.deepEqual(first, second);
 });
+
+test("logs when the config file is unreadable", async () => {
+  const dir = await freshDir();
+  await writeFile(path.join(dir, "agent-config.json"), "{ not json", "utf8");
+
+  const messages: string[] = [];
+  const store = createConfigStore(dir, (message) => messages.push(message));
+  await store.read();
+
+  assert.equal(messages.length, 1);
+});
+
+test("refuses to write over an unparseable secrets file", async () => {
+  const dir = await freshDir();
+  await writeFile(path.join(dir, "agent-secrets.json"), "{ not json", "utf8");
+  const store = createConfigStore(dir, () => {});
+
+  await assert.rejects(() => store.setSecret("CRM_API_KEY", "abc"));
+  await assert.rejects(() => store.deleteSecret("CRM_API_KEY"));
+
+  // The corrupt file must survive, exactly as a corrupt config file does.
+  assert.equal(await readFile(path.join(dir, "agent-secrets.json"), "utf8"), "{ not json");
+});
+
+test("never logs the contents of an unparseable secrets file", async () => {
+  const dir = await freshDir();
+  await writeFile(
+    path.join(dir, "agent-secrets.json"),
+    '{"CRM_API_KEY":"super-secret-value" ',
+    "utf8",
+  );
+
+  const messages: string[] = [];
+  const store = createConfigStore(dir, (message) => messages.push(message));
+  await store.setSecret("OTHER", "x").catch(() => undefined);
+
+  assert.ok(!messages.join(" ").includes("super-secret-value"));
+});
+
+test("a missing secrets file is still the ordinary first-run path", async () => {
+  const store = createConfigStore(await freshDir(), () => {});
+  await store.setSecret("CRM_API_KEY", "abc");
+  assert.deepEqual(await store.listSecretKeys(), ["CRM_API_KEY"]);
+});
+
+test("listing secret keys survives a corrupt file", async () => {
+  const dir = await freshDir();
+  await writeFile(path.join(dir, "agent-secrets.json"), "{ not json", "utf8");
+  const store = createConfigStore(dir, () => {});
+  assert.deepEqual(await store.listSecretKeys(), []);
+});

@@ -76,15 +76,38 @@ export function createConfigStore(dataDir: string, log: StoreLogger = () => {}):
     }
   }
 
+  /**
+   * A missing file is the ordinary first-run path. An unparseable one is not:
+   * returning `{}` there would let the next write rename an empty object over
+   * the user's real secrets, destroying every one of them. Throwing keeps the
+   * file on disk and recoverable, matching how the config path behaves.
+   *
+   * The error's message is never logged. Node's JSON.parse SyntaxError embeds a
+   * snippet of the input, which on this file is secret material.
+   */
   async function readSecrets(): Promise<Record<string, string>> {
+    let raw: string;
     try {
-      const parsed: unknown = JSON.parse(await readFile(secretsPath, "utf8"));
-      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
-      return parsed as Record<string, string>;
+      raw = await readFile(secretsPath, "utf8");
     } catch (error) {
-      if (!isMissing(error)) log(`agent-secrets.json is unreadable: ${String(error)}`);
-      return {};
+      if (isMissing(error)) return {};
+      log(`agent-secrets.json could not be read (${(error as Error).name})`);
+      throw new Error("The secrets file could not be read.");
     }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      log(`agent-secrets.json is not valid JSON (${(error as Error).name})`);
+      throw new Error("The secrets file is corrupt; it was left untouched.");
+    }
+
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      log("agent-secrets.json is not an object; it was left untouched");
+      throw new Error("The secrets file is corrupt; it was left untouched.");
+    }
+    return parsed as Record<string, string>;
   }
 
   return {
@@ -142,7 +165,13 @@ export function createConfigStore(dataDir: string, log: StoreLogger = () => {}):
     },
 
     async listSecretKeys(): Promise<string[]> {
-      return Object.keys(await readSecrets()).sort();
+      try {
+        return Object.keys(await readSecrets()).sort();
+      } catch {
+        // A corrupt file must not take down the console that lists these names.
+        // Writes still refuse (see setSecret/deleteSecret), so nothing is lost.
+        return [];
+      }
     },
 
     async setSecret(key: string, value: string): Promise<void> {
@@ -170,5 +199,14 @@ export function createConfigStore(dataDir: string, log: StoreLogger = () => {}):
   };
 }
 
-/** The instance every caller in this process should use. */
-export const configStore = createConfigStore(path.join(process.cwd(), "data"));
+/**
+ * The instance every caller in this process should use.
+ *
+ * The gateway builds its own store with its own logger; this one serves the
+ * Next process, where a silent fallback previously meant a rejected config file
+ * produced no output anywhere and the editor showed seed defaults with no clue
+ * that saved work had been refused.
+ */
+export const configStore = createConfigStore(path.join(process.cwd(), "data"), (message) =>
+  console.warn(`[agent-config] ${message}`),
+);
