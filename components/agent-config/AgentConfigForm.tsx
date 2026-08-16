@@ -17,6 +17,12 @@ export type TabId = "conversation" | "models" | "actions" | "advanced";
 export interface TabProps {
   config: AgentConfig;
   update: (patch: Partial<AgentConfig>) => void;
+  /**
+   * Secrets save immediately to their own endpoint, so they are not part of the
+   * form's dirty state. Both snapshots move together, which keeps Discard from
+   * reverting a list the server has already changed.
+   */
+  setSecretKeys: (keys: string[]) => void;
   /** Keyed by the dotted path from the server, e.g. "variables.0.name". */
   errors: Map<string, string>;
 }
@@ -76,6 +82,11 @@ export function AgentConfigForm({ initialConfig }: { initialConfig: AgentConfig 
     setConfig((current) => ({ ...current, ...patch }));
   }, []);
 
+  const setSecretKeys = useCallback((secretKeys: string[]) => {
+    setSaved((current) => ({ ...current, secretKeys }));
+    setConfig((current) => ({ ...current, secretKeys }));
+  }, []);
+
   const discard = useCallback(() => {
     setConfig(saved);
     setErrors(new Map());
@@ -128,7 +139,7 @@ export function AgentConfigForm({ initialConfig }: { initialConfig: AgentConfig 
     setSaveState("saved");
   }, [config]);
 
-  const tabProps: TabProps = { config, update, errors };
+  const tabProps: TabProps = { config, update, setSecretKeys, errors };
 
   return (
     <div className="mt-8 flex flex-col">

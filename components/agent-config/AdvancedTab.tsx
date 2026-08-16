@@ -20,8 +20,8 @@ function usedIn(name: string, instructions: string, welcome: string): string[] {
   return places;
 }
 
-export function AdvancedTab({ config, update, errors }: TabProps) {
-  const [secretKeys, setSecretKeys] = useState<string[]>(config.secretKeys);
+export function AdvancedTab({ config, update, setSecretKeys, errors }: TabProps) {
+  const secretKeys = config.secretKeys;
   const [newSecretKey, setNewSecretKey] = useState("");
   const [newSecretValue, setNewSecretValue] = useState("");
   const [secretError, setSecretError] = useState<string | null>(null);
@@ -90,17 +90,30 @@ export function AdvancedTab({ config, update, errors }: TabProps) {
     } finally {
       setSecretBusy(false);
     }
-  }, [newSecretKey, newSecretValue]);
+  }, [newSecretKey, newSecretValue, setSecretKeys]);
 
-  const removeSecret = useCallback(async (key: string) => {
-    if (!window.confirm(`Delete the secret ${key}? This cannot be undone.`)) return;
-    const response = await fetch(`/api/agent-config/secrets?key=${encodeURIComponent(key)}`, {
-      method: "DELETE",
-    });
-    if (!response.ok) return;
-    const body: { secretKeys: string[] } = await response.json();
-    setSecretKeys(body.secretKeys);
-  }, []);
+  const removeSecret = useCallback(
+    async (key: string) => {
+      if (!window.confirm(`Delete the secret ${key}? This cannot be undone.`)) return;
+      setSecretError(null);
+
+      try {
+        const response = await fetch(`/api/agent-config/secrets?key=${encodeURIComponent(key)}`, {
+          method: "DELETE",
+        });
+        if (!response.ok) {
+          const body: { errors?: { message: string }[] } = await response.json().catch(() => ({}));
+          setSecretError(body.errors?.[0]?.message ?? "Could not delete the secret.");
+          return;
+        }
+        const body: { secretKeys: string[] } = await response.json();
+        setSecretKeys(body.secretKeys);
+      } catch {
+        setSecretError("Could not reach the server.");
+      }
+    },
+    [setSecretKeys],
+  );
 
   return (
     <div className="flex flex-col gap-9">
