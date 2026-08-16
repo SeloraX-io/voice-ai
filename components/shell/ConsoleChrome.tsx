@@ -16,7 +16,6 @@ import { CONFIG_ROUTES } from "@/lib/agent-config/routes";
  */
 export function ConsoleChrome({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const [previewOpen, setPreviewOpen] = useState(false);
   const showSaveBar = CONFIG_ROUTES.includes(pathname);
 
   const { config, dirty, save } = useAgentConfig();
@@ -63,30 +62,31 @@ export function ConsoleChrome({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-dvh flex-col md:flex-row">
-      <Sidebar
-        onTestAgent={() => setPreviewOpen(true)}
-        callActive={callActive}
-        callSeconds={displayedCallSeconds}
-      />
+      <Sidebar />
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <main className="flex-1 px-6 py-8">
-          <div className="mx-auto w-full max-w-3xl">{children}</div>
-        </main>
-        {showSaveBar && <SaveBar />}
+      {/* Below lg the preview stacks under the content rather than hiding: with
+          no button to summon it, hiding would leave no way to test at all on a
+          narrow window. */}
+      <div className="flex min-w-0 flex-1 flex-col lg:flex-row">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <main className="flex-1 px-6 py-8">
+            <div className="mx-auto w-full max-w-3xl">{children}</div>
+          </main>
+          {showSaveBar && <SaveBar />}
+        </div>
+
+        <PreviewPanel
+          voice={voice}
+          onStart={startCall}
+          agentName={config.agentName}
+          dirty={dirty}
+          callStartedWith={activeCallStartedWith}
+          currentUpdatedAt={config.updatedAt}
+          callActive={callActive}
+          callSeconds={displayedCallSeconds}
+          onSaveAndStart={saveAndStartCall}
+        />
       </div>
-
-      <PreviewPanel
-        open={previewOpen}
-        onClose={() => setPreviewOpen(false)}
-        voice={voice}
-        onStart={startCall}
-        agentName={config.agentName}
-        dirty={dirty}
-        callStartedWith={activeCallStartedWith}
-        currentUpdatedAt={config.updatedAt}
-        onSaveAndStart={saveAndStartCall}
-      />
     </div>
   );
 }

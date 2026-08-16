@@ -3,26 +3,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { AudioLines, Menu, Play, X } from "lucide-react";
+import { AudioLines, Menu, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { AGENT_ROUTES } from "@/lib/agent-config/routes";
 import { cn } from "@/lib/utils";
 import { useNavGuard } from "@/components/shell/DirtyNavGuard";
 
-function formatElapsed(seconds: number): string {
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds % 60;
-  return `${minutes}:${String(rest).padStart(2, "0")}`;
-}
-
-interface SidebarProps {
-  onTestAgent: () => void;
-  callActive: boolean;
-  callSeconds: number;
-}
-
-export function Sidebar({ onTestAgent, callActive, callSeconds }: SidebarProps) {
+export function Sidebar() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const mayNavigate = useNavGuard();
@@ -101,27 +89,6 @@ export function Sidebar({ onTestAgent, callActive, callSeconds }: SidebarProps) 
         {agentItems.map((route) => item(route.href, route.label))}
 
         <div className="pt-2">{topLevelItems.map((route) => item(route.href, route.label))}</div>
-
-        <div className="mt-auto pt-4">
-          <Button
-            variant="outline"
-            className="w-full"
-            onClick={onTestAgent}
-            aria-label={callActive ? "Show the call in progress" : "Test agent"}
-          >
-            {callActive ? (
-              <>
-                <span className="size-2 rounded-full bg-[var(--success)] [animation:status-pulse_1.6s_ease-in-out_infinite]" />
-                Live · {formatElapsed(callSeconds)}
-              </>
-            ) : (
-              <>
-                <Play />
-                Test agent
-              </>
-            )}
-          </Button>
-        </div>
       </nav>
     </>
   );
