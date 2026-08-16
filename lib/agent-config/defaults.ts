@@ -7,7 +7,7 @@
  */
 
 import type { AgentConfig } from "./schema";
-import { AGENT_CONFIG_VERSION } from "./schema";
+import { AGENT_CONFIG_VERSION, DEFAULT_END_CALL_POLICY } from "./schema";
 
 export const DEFAULT_INSTRUCTIONS = `You are a professional customer support voice agent for an online retailer. You are speaking with a customer on a phone call.
 
@@ -43,6 +43,10 @@ export const DEFAULT_AGENT_CONFIG: AgentConfig = {
   version: AGENT_CONFIG_VERSION,
   type: "open_ended",
   instructions: DEFAULT_INSTRUCTIONS,
+  callEnding: {
+    enabled: true,
+    policy: DEFAULT_END_CALL_POLICY,
+  },
   welcome: {
     enabled: false,
     message: "",

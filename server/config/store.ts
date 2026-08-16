@@ -31,6 +31,15 @@ export interface ConfigStore {
   /** Persists a config, stamping `updatedAt`. Returns what was written. */
   write(config: AgentConfig): Promise<AgentConfig>;
   listSecretKeys(): Promise<string[]>;
+  /**
+   * Secret VALUES, for resolving `{{NAME}}` references when the gateway calls a
+   * tool on the agent's behalf.
+   *
+   * The only reader is the tool runner in the gateway process. Nothing in
+   * `app/` may call this: the contract everywhere else is that values never
+   * leave the server, and an API route that returned them would break it.
+   */
+  resolveSecrets(): Promise<Record<string, string>>;
   setSecret(key: string, value: string): Promise<void>;
   deleteSecret(key: string): Promise<void>;
 }
@@ -162,6 +171,17 @@ export function createConfigStore(dataDir: string, log: StoreLogger = () => {}):
       };
       await writeAtomic(configPath, `${JSON.stringify(saved, null, 2)}\n`, 0o644);
       return saved;
+    },
+
+    async resolveSecrets(): Promise<Record<string, string>> {
+      try {
+        return await readSecrets();
+      } catch {
+        // Already logged by readSecrets. A corrupt file leaves tools
+        // unauthenticated rather than taking the call down; the request will
+        // fail with the endpoint's own 401, which is a legible outcome.
+        return {};
+      }
     },
 
     async listSecretKeys(): Promise<string[]> {

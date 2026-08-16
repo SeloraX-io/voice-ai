@@ -38,6 +38,7 @@ test("appends the greeting directive when the welcome is enabled", () => {
     config({
       instructions: "Be brief.",
       welcome: { enabled: true, message: "Hi there.", allowInterrupt: true },
+      callEnding: { enabled: false, policy: "" },
     }),
   );
   assert.equal(
@@ -51,6 +52,7 @@ test("omits the greeting directive when the welcome is disabled", () => {
     config({
       instructions: "Be brief.",
       welcome: { enabled: false, message: "Hi there.", allowInterrupt: true },
+      callEnding: { enabled: false, policy: "" },
     }),
   );
   assert.equal(buildSystemInstruction(resolved), "Be brief.");
@@ -61,7 +63,46 @@ test("omits the greeting directive when the message is blank", () => {
     config({
       instructions: "Be brief.",
       welcome: { enabled: true, message: "   ", allowInterrupt: true },
+      callEnding: { enabled: false, policy: "" },
     }),
   );
   assert.equal(buildSystemInstruction(resolved), "Be brief.");
+});
+
+test("appends the hang-up policy, and names the mechanism as well as the rule", () => {
+  const resolved = resolveAgentConfig(
+    config({
+      instructions: "Be brief.",
+      welcome: { enabled: false, message: "", allowInterrupt: true },
+      callEnding: { enabled: true, policy: "End on abuse." },
+    }),
+  );
+
+  const instruction = buildSystemInstruction(resolved);
+  assert.ok(instruction.includes("End on abuse."));
+  // Policy without mechanism produces an agent that announces it is hanging up
+  // and then keeps listening, so the function name must be spelled out.
+  assert.ok(instruction.includes("end_call"));
+});
+
+test("omits the hang-up section when the agent may not end calls", () => {
+  const resolved = resolveAgentConfig(
+    config({
+      instructions: "Be brief.",
+      welcome: { enabled: false, message: "", allowInterrupt: true },
+      callEnding: { enabled: false, policy: "End on abuse." },
+    }),
+  );
+  assert.equal(buildSystemInstruction(resolved), "Be brief.");
+});
+
+test("interpolates variables into the hang-up policy", () => {
+  const resolved = resolveAgentConfig(
+    config({
+      welcome: { enabled: false, message: "", allowInterrupt: true },
+      callEnding: { enabled: true, policy: "Say goodbye on behalf of {company}." },
+      variables: [company],
+    }),
+  );
+  assert.ok(resolved.callEnding.policy.includes("Selorax"));
 });

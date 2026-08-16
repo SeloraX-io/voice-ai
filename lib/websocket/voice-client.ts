@@ -125,13 +125,18 @@ export class VoiceClient {
     this.send({ type: "audio_stream_end" });
   }
 
-  close(): void {
+  /**
+   * `timeToFirstAudioMs` is measured here, in the browser — the gateway cannot
+   * see when audio actually reached the speakers — so the hang-up carries it
+   * along for the call log.
+   */
+  close(timeToFirstAudioMs: number | null = null): void {
     this.closing = true;
     this.stopPinging();
     const socket = this.socket;
     if (!socket) return;
     if (socket.readyState === WebSocket.OPEN) {
-      this.send({ type: "end" });
+      this.send({ type: "end", timeToFirstAudioMs });
       socket.close(1000, "client hangup");
     } else {
       socket.close();

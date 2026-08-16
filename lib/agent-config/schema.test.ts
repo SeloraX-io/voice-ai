@@ -111,3 +111,19 @@ test("a config saved before tools existed still loads, keeping its other fields"
     assert.deepEqual(result.config.tools, { http: [], client: [], webhooks: [] });
   }
 });
+
+test("a config saved before call-ending existed gets the ability, not silence", () => {
+  // Defaulting this off would leave an existing agent announcing that it is
+  // ending a call and then continuing to listen, because `end_call` would never
+  // be declared to it.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- destructured only to omit the field
+  const { callEnding: _c, ...withoutCallEnding } = DEFAULT_AGENT_CONFIG;
+  const result = validateAgentConfig({ ...withoutCallEnding, instructions: "Keep me." });
+
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.config.callEnding.enabled, true);
+    assert.ok(result.config.callEnding.policy.length > 0);
+    assert.equal(result.config.instructions, "Keep me.");
+  }
+});

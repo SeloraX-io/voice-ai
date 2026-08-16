@@ -57,11 +57,47 @@ export interface ModelsConfig {
   vad: VadConfig;
 }
 
+/**
+ * The default hang-up policy.
+ *
+ * Abuse ends a call promptly; merely off-topic gets redirected twice first. An
+ * agent that hangs up on a confused customer is worse than one that is slightly
+ * too patient, so the two cases are deliberately not treated alike.
+ */
+export const DEFAULT_END_CALL_POLICY = `End the call yourself in these situations:
+
+- The caller is abusive, uses slurs or obscene language, or is threatening. Say
+  once, calmly, that you cannot continue the call if that continues. If it
+  continues, say a short closing line and end the call.
+- The caller repeatedly talks about things unrelated to support after you have
+  twice tried to bring them back to the reason they called. Say you are ending
+  the call and that they are welcome to call back about their order.
+- The caller says they want to hang up, or the matter is resolved and they have
+  nothing further.
+
+Never end a call because someone is confused, slow, upset about their order, or
+hard to understand. Those are the calls you are for.
+
+Always say a short closing line first, then end the call — the line is spoken
+before the call actually ends.`;
+
+/** Whether and when the agent may hang up on its own. */
+export interface CallEndingConfig {
+  enabled: boolean;
+  /**
+   * Appended to the instructions, so it is the model — not code — that judges
+   * when a call should end. Judgement about tone and relevance is exactly what
+   * a rule in code cannot do well.
+   */
+  policy: string;
+}
+
 export interface AgentConfig {
   version: number;
   type: ConversationType;
   instructions: string;
   welcome: WelcomeConfig;
+  callEnding: CallEndingConfig;
   models: ModelsConfig;
   agentName: string;
   variables: AgentVariable[];
@@ -223,6 +259,45 @@ function validateWelcome(value: unknown, errors: FieldError[]): WelcomeConfig {
 }
 
 /**
+ * Absent on every configuration saved before the agent could hang up, so it
+ * defaults rather than failing — requiring it would reset those users to seed
+ * defaults on the next read.
+ *
+ * The default is ENABLED, matching a freshly seeded config. Defaulting it off
+ * would mean an existing agent silently lacked the ability while a new one had
+ * it, and the difference would only show up as an agent announcing it is ending
+ * a call and then carrying on listening. The shipped policy is conservative:
+ * abuse ends a call, confusion never does.
+ */
+function validateCallEnding(value: unknown, errors: FieldError[]): CallEndingConfig {
+  if (value === undefined) return { enabled: true, policy: DEFAULT_END_CALL_POLICY };
+
+  const record = asRecord(value);
+  if (!record) {
+    errors.push({ path: "callEnding", message: "Must be an object." });
+    return { enabled: true, policy: DEFAULT_END_CALL_POLICY };
+  }
+
+  const enabled = readBoolean(record.enabled, "callEnding.enabled", errors);
+  const policy = readString(record.policy, "callEnding.policy", errors, "");
+
+  if (policy.length > LIMITS.instructionsMax) {
+    errors.push({
+      path: "callEnding.policy",
+      message: `At most ${LIMITS.instructionsMax} characters.`,
+    });
+  }
+  if (enabled && policy.trim() === "") {
+    errors.push({
+      path: "callEnding.policy",
+      message: "Required when the agent is allowed to end calls.",
+    });
+  }
+
+  return { enabled, policy };
+}
+
+/**
  * Validates an untrusted config. Errors accumulate rather than short-circuit so
  * the form can highlight every bad field at once.
  *
@@ -262,6 +337,7 @@ export function validateAgentConfig(input: unknown): ValidationResult {
   }
 
   const welcome = validateWelcome(record.welcome, errors);
+  const callEnding = validateCallEnding(record.callEnding, errors);
   const models = validateModels(record.models, errors);
   const variables = validateVariables(record.variables, errors);
   const tools = validateTools(record.tools, errors);
@@ -275,6 +351,7 @@ export function validateAgentConfig(input: unknown): ValidationResult {
       type: "open_ended",
       instructions,
       welcome,
+      callEnding,
       models,
       agentName,
       variables,

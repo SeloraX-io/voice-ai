@@ -1,0 +1,293 @@
+[
+  {
+    "id": "aaf2f6dc-7385-4041-a5ea-935b3cb98867",
+    "startedAt": "2026-08-16T12:53:02.030Z",
+    "endedAt": "2026-08-16T12:53:17.026Z",
+    "durationMs": 14996,
+    "model": "gemini-3.1-flash-live-preview",
+    "voice": "Kore",
+    "usage": {
+      "inputTextTokens": 5579,
+      "inputAudioTokens": 201,
+      "outputTextTokens": 0,
+      "outputAudioTokens": 177,
+      "reports": 1
+    },
+    "cost": {
+      "inputUsd": 0.00478725,
+      "outputUsd": 0.002124,
+      "totalUsd": 0.00691125
+    },
+    "turns": 1,
+    "interruptions": 0,
+    "timeToFirstAudioMs": 812,
+    "endedBy": "caller"
+  },
+  {
+    "id": "5dd4ab29-23de-4585-b1e4-e784170e5a31",
+    "startedAt": "2026-08-16T12:53:42.667Z",
+    "endedAt": "2026-08-16T12:54:08.665Z",
+    "durationMs": 25998,
+    "model": "gemini-3.1-flash-live-preview",
+    "voice": "Kore",
+    "usage": {
+      "inputTextTokens": 5579,
+      "inputAudioTokens": 201,
+      "outputTextTokens": 0,
+      "outputAudioTokens": 188,
+      "reports": 1
+    },
+    "cost": {
+      "inputUsd": 0.00478725,
+      "outputUsd": 0.0022559999999999998,
+      "totalUsd": 0.007043249999999999
+    },
+    "turns": 1,
+    "interruptions": 1,
+    "timeToFirstAudioMs": 700,
+    "endedBy": "caller"
+  },
+  {
+    "id": "e2939b90-2039-484b-9caf-8542f5aa4705",
+    "startedAt": "2026-08-16T13:08:00.328Z",
+    "endedAt": "2026-08-16T13:08:06.288Z",
+    "durationMs": 5960,
+    "model": "gemini-3.1-flash-live-preview",
+    "voice": "Kore",
+    "usage": {
+      "inputTextTokens": 0,
+      "inputAudioTokens": 0,
+      "outputTextTokens": 0,
+      "outputAudioTokens": 0,
+      "reports": 0
+    },
+    "cost": {
+      "inputUsd": 0,
+      "outputUsd": 0,
+      "totalUsd": 0
+    },
+    "turns": 0,
+    "interruptions": 0,
+    "timeToFirstAudioMs": null,
+    "endedBy": "caller"
+  },
+  {
+    "id": "6fd5bb2f-bc86-4eb0-bb64-74a7a9c0b9f5",
+    "startedAt": "2026-08-16T13:08:08.929Z",
+    "endedAt": "2026-08-16T13:10:11.103Z",
+    "durationMs": 122174,
+    "model": "gemini-3.1-flash-live-preview",
+    "voice": "Kore",
+    "usage": {
+      "inputTextTokens": 5946,
+      "inputAudioTokens": 2695,
+      "outputTextTokens": 0,
+      "outputAudioTokens": 413,
+      "reports": 10
+    },
+    "cost": {
+      "inputUsd": 0.0125445,
+      "outputUsd": 0.004956,
+      "totalUsd": 0.017500500000000002
+    },
+    "turns": 10,
+    "interruptions": 3,
+    "timeToFirstAudioMs": 1734.9000000059605,
+    "endedBy": "caller"
+  },
+  {
+    "id": "5815de47-42cf-4a8f-9625-a897a4657756",
+    "startedAt": "2026-08-16T13:10:44.746Z",
+    "endedAt": "2026-08-16T13:12:07.086Z",
+    "durationMs": 82340,
+    "model": "gemini-3.1-flash-live-preview",
+    "voice": "Kore",
+    "usage": {
+      "inputTextTokens": 5823,
+      "inputAudioTokens": 1742,
+      "outputTextTokens": 0,
+      "outputAudioTokens": 406,
+      "reports": 6
+    },
+    "cost": {
+      "inputUsd": 0.00959325,
+      "outputUsd": 0.004872,
+      "totalUsd": 0.014465249999999999
+    },
+    "turns": 6,
+    "interruptions": 1,
+    "timeToFirstAudioMs": 1943.699999988079,
+    "endedBy": "caller"
+  },
+  {
+    "id": "41786eb5-bcf1-4fce-9933-157a77e958ff",
+    "startedAt": "2026-08-16T13:13:01.328Z",
+    "endedAt": "2026-08-16T13:13:10.403Z",
+    "durationMs": 9075,
+    "model": "gemini-3.1-flash-live-preview",
+    "voice": "Puck",
+    "usage": {
+      "inputTextTokens": 5587,
+      "inputAudioTokens": 299,
+      "outputTextTokens": 0,
+      "outputAudioTokens": 151,
+      "reports": 2
+    },
+    "cost": {
+      "inputUsd": 0.00508725,
+      "outputUsd": 0.0018120000000000002,
+      "totalUsd": 0.00689925
+    },
+    "turns": 2,
+    "interruptions": 1,
+    "timeToFirstAudioMs": 937.0999999940395,
+    "endedBy": "caller"
+  },
+  {
+    "id": "e28bb37c-db65-4da0-ac99-c16f51ff31f8",
+    "startedAt": "2026-08-16T13:13:17.240Z",
+    "endedAt": "2026-08-16T13:13:26.886Z",
+    "durationMs": 9646,
+    "model": "gemini-3.1-flash-live-preview",
+    "voice": "Charon",
+    "usage": {
+      "inputTextTokens": 5578,
+      "inputAudioTokens": 259,
+      "outputTextTokens": 0,
+      "outputAudioTokens": 162,
+      "reports": 1
+    },
+    "cost": {
+      "inputUsd": 0.0049605,
+      "outputUsd": 0.001944,
+      "totalUsd": 0.006904499999999999
+    },
+    "turns": 1,
+    "interruptions": 0,
+    "timeToFirstAudioMs": 680.9000000059605,
+    "endedBy": "caller"
+  },
+  {
+    "id": "5f82ee03-c26f-483d-a874-932c91d3883b",
+    "startedAt": "2026-08-16T13:14:06.672Z",
+    "endedAt": "2026-08-16T13:15:27.602Z",
+    "durationMs": 80930,
+    "model": "gemini-3.1-flash-live-preview",
+    "voice": "Charon",
+    "usage": {
+      "inputTextTokens": 5759,
+      "inputAudioTokens": 1203,
+      "outputTextTokens": 0,
+      "outputAudioTokens": 238,
+      "reports": 5
+    },
+    "cost": {
+      "inputUsd": 0.007928250000000001,
+      "outputUsd": 0.002856,
+      "totalUsd": 0.010784250000000002
+    },
+    "turns": 5,
+    "interruptions": 0,
+    "timeToFirstAudioMs": 1273.4000000059605,
+    "endedBy": "caller"
+  },
+  {
+    "id": "42deb7ff-e7e4-41bb-8c40-6fb4f89c4645",
+    "startedAt": "2026-08-16T13:18:53.937Z",
+    "endedAt": "2026-08-16T13:22:09.767Z",
+    "durationMs": 195830,
+    "model": "gemini-3.1-flash-live-preview",
+    "voice": "Charon",
+    "usage": {
+      "inputTextTokens": 3949,
+      "inputAudioTokens": 4408,
+      "outputTextTokens": 0,
+      "outputAudioTokens": 464,
+      "reports": 16
+    },
+    "cost": {
+      "inputUsd": 0.01618575,
+      "outputUsd": 0.005568,
+      "totalUsd": 0.02175375
+    },
+    "turns": 16,
+    "interruptions": 5,
+    "timeToFirstAudioMs": 725,
+    "endedBy": "caller"
+  },
+  {
+    "id": "fd8b8bdc-a1a2-4b12-8f10-979f53f2ae0c",
+    "startedAt": "2026-08-16T13:36:38.037Z",
+    "endedAt": "2026-08-16T13:37:10.043Z",
+    "durationMs": 32006,
+    "model": "gemini-3.1-flash-live-preview",
+    "voice": "Charon",
+    "usage": {
+      "inputTextTokens": 7356,
+      "inputAudioTokens": 1221,
+      "outputTextTokens": 0,
+      "outputAudioTokens": 388,
+      "reports": 2
+    },
+    "cost": {
+      "inputUsd": 0.00918,
+      "outputUsd": 0.004656,
+      "totalUsd": 0.013836000000000001
+    },
+    "turns": 2,
+    "interruptions": 1,
+    "timeToFirstAudioMs": null,
+    "endedBy": "caller",
+    "endReason": null
+  },
+  {
+    "id": "dff37d62-58f1-4e08-9fd2-f7952325b0e8",
+    "startedAt": "2026-08-16T13:38:10.354Z",
+    "endedAt": "2026-08-16T13:38:35.637Z",
+    "durationMs": 25283,
+    "model": "gemini-3.1-flash-live-preview",
+    "voice": "Charon",
+    "usage": {
+      "inputTextTokens": 3924,
+      "inputAudioTokens": 547,
+      "outputTextTokens": 0,
+      "outputAudioTokens": 507,
+      "reports": 2
+    },
+    "cost": {
+      "inputUsd": 0.004584,
+      "outputUsd": 0.006083999999999999,
+      "totalUsd": 0.010668
+    },
+    "turns": 2,
+    "interruptions": 1,
+    "timeToFirstAudioMs": null,
+    "endedBy": "agent",
+    "endReason": "caller was abusive"
+  },
+  {
+    "id": "f2a16de5-b3d6-4196-b820-676c29892934",
+    "startedAt": "2026-08-16T13:38:57.283Z",
+    "endedAt": "2026-08-16T13:39:37.291Z",
+    "durationMs": 40008,
+    "model": "gemini-3.1-flash-live-preview",
+    "voice": "Charon",
+    "usage": {
+      "inputTextTokens": 3988,
+      "inputAudioTokens": 756,
+      "outputTextTokens": 0,
+      "outputAudioTokens": 292,
+      "reports": 3
+    },
+    "cost": {
+      "inputUsd": 0.005259,
+      "outputUsd": 0.003504,
+      "totalUsd": 0.008763
+    },
+    "turns": 3,
+    "interruptions": 1,
+    "timeToFirstAudioMs": null,
+    "endedBy": "caller",
+    "endReason": null
+  }
+]

@@ -13,6 +13,7 @@ import {
   GoogleGenAI,
   Modality,
   StartSensitivity,
+  type FunctionDeclaration,
   type LiveServerMessage,
   type Session,
 } from "@google/genai";
@@ -23,7 +24,16 @@ import {
   resolveAgentConfig,
   type ResolvedAgentConfig,
 } from "../../lib/agent-config/resolve";
+import { toolDeclarations } from "../../lib/agent-config/tool-declarations";
+import type { UsageReport } from "../../lib/call-logs/pricing";
 import { createConfigStore, type StoreLogger } from "../config/store";
+
+/** One function the model wants run. Mirrors the SDK's `FunctionCall`. */
+export interface LiveFunctionCall {
+  id?: string;
+  name?: string;
+  args?: Record<string, unknown>;
+}
 
 export interface GeminiSessionEvents {
   /** Base64 PCM16 @ 24 kHz, emitted per chunk with zero buffering. */
@@ -34,6 +44,13 @@ export interface GeminiSessionEvents {
   onInterrupted: () => void;
   onGenerationComplete: () => void;
   onTurnComplete: () => void;
+  /**
+   * Gemini's running token usage for the session. Reported periodically rather
+   * than once at the end, so a call that drops still has a usable figure.
+   */
+  onUsage: (report: UsageReport) => void;
+  /** The model asked to run one or more functions. */
+  onToolCall: (calls: LiveFunctionCall[]) => void;
   onError: (message: string) => void;
   onClose: (reason: string) => void;
 }
@@ -95,6 +112,9 @@ export class GeminiVoiceSession {
   ): Promise<GeminiVoiceSession> {
     const startedAt = Date.now();
     const ai = getClient();
+    const declarations = toolDeclarations(agent.tools, {
+      canEndCall: agent.callEnding.enabled && agent.callEnding.policy.trim() !== "",
+    });
 
     const session = await ai.live.connect({
       model: agent.models.liveModel,
@@ -130,6 +150,17 @@ export class GeminiVoiceSession {
         },
         // Lets a call run past the raw context limit instead of being dropped.
         contextWindowCompression: { slidingWindow: {} },
+        // Only functions the gateway can actually run are declared; see
+        // toolDeclarations for why client tools are withheld.
+        //
+        // The cast is the one place the SDK's `Type` enum meets our plain
+        // string literals. Keeping the declarations module free of the SDK is
+        // what lets it be unit tested without a live session, and `Type` is a
+        // string enum whose members are exactly these literals.
+        tools:
+          declarations.length > 0
+            ? [{ functionDeclarations: declarations as unknown as FunctionDeclaration[] }]
+            : undefined,
       },
       callbacks: {
         onmessage: (message: LiveServerMessage) => handleMessage(message, events),
@@ -167,6 +198,16 @@ export class GeminiVoiceSession {
     this.session.sendRealtimeInput({ text });
   }
 
+  /**
+   * Answers a function call. The model waits for this before it speaks again,
+   * so every call it makes must get exactly one response — including failures,
+   * which are sent as an ordinary result describing what went wrong.
+   */
+  sendToolResponse(responses: Array<{ id?: string; name?: string; response: Record<string, unknown> }>): void {
+    if (this.closed) return;
+    this.session.sendToolResponse({ functionResponses: responses });
+  }
+
   /** Tells Gemini the microphone stopped so it can close out the turn. */
   signalAudioStreamEnd(): void {
     if (this.closed) return;
@@ -185,6 +226,14 @@ export class GeminiVoiceSession {
 }
 
 function handleMessage(message: LiveServerMessage, events: GeminiSessionEvents): void {
+  // Usage arrives on its own frames as well as alongside content, so it is read
+  // before the early return below — otherwise a usage-only frame would be
+  // dropped and the call would under-report what it cost.
+  if (message.usageMetadata) events.onUsage(message.usageMetadata);
+
+  const calls = message.toolCall?.functionCalls;
+  if (calls && calls.length > 0) events.onToolCall(calls);
+
   const content = message.serverContent;
 
   // Audio first: forwarding it before anything else shaves a tick off TTFA.

@@ -155,6 +155,41 @@ export function ConversationTab({ config, update, errors }: TabProps) {
           rather than an exact recording.
         </p>
       </section>
+
+      <section className="flex flex-col gap-3">
+        <Field
+          label="Call ending"
+          htmlFor="call-ending"
+          description="When the agent should hang up on its own. It decides using this text, so write it the way you would brief a person."
+          error={errors.get("callEnding.policy")}
+          action={
+            <Switch
+              label="Let the agent end calls"
+              checked={config.callEnding.enabled}
+              onCheckedChange={(enabled) =>
+                update({ callEnding: { ...config.callEnding, enabled } })
+              }
+            />
+          }
+        >
+          <Textarea
+            id="call-ending"
+            rows={10}
+            value={config.callEnding.policy}
+            disabled={!config.callEnding.enabled}
+            onChange={(event) =>
+              update({ callEnding: { ...config.callEnding, policy: event.target.value } })
+            }
+            className="font-mono text-[13px]"
+            spellCheck={false}
+          />
+        </Field>
+
+        <p className="text-xs leading-relaxed text-[var(--text-dim)]">
+          The agent says its closing line first, then hangs up about two seconds later so the line
+          finishes playing. Every call it ends is recorded under Calls with the reason it gave.
+        </p>
+      </section>
     </div>
   );
 }

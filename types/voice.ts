@@ -5,6 +5,8 @@
  * travels as base64-encoded raw PCM (signed 16-bit, little-endian, mono).
  */
 
+import type { CallUsage } from "../lib/call-logs/types";
+
 export const INPUT_SAMPLE_RATE = 16000;
 export const OUTPUT_SAMPLE_RATE = 24000;
 
@@ -37,8 +39,11 @@ export type ClientMessage =
   | { type: "audio_stream_end" }
   /** Round-trip probe used for the live latency read-out. */
   | { type: "ping"; t: number }
-  /** Graceful hang-up. */
-  | { type: "end" };
+  /**
+   * Graceful hang-up. Carries the one metric only the browser can measure —
+   * when audio actually reached the speakers — so the call log can record it.
+   */
+  | { type: "end"; timeToFirstAudioMs?: number | null };
 
 /* -------------------------------------------------------------------------- */
 /* Server -> Client                                                           */
@@ -71,6 +76,22 @@ export type ServerMessage =
   | { type: "interrupted" }
   | { type: "turn_complete" }
   | { type: "pong"; t: number }
+  /**
+   * Running token usage and its estimated cost, forwarded as Gemini reports it
+   * so the console can show what a call is costing while it is still running.
+   */
+  | { type: "usage_update"; usage: CallUsage; costUsd: number }
+  /**
+   * A tool is running. Sent so the console can show it; `silent` tools are
+   * still reported here because the operator testing the agent should see
+   * everything it does, even what the caller is not told about.
+   */
+  | { type: "tool_call"; name: string; silent: boolean }
+  /**
+   * The model decided to hang up. The call does not end at this instant — the
+   * closing line is still being spoken — so this is a notice, not the close.
+   */
+  | { type: "agent_ending_call"; reason: string }
   | { type: "error"; message: string; code: VoiceErrorCode; fatal: boolean };
 
 /* -------------------------------------------------------------------------- */
@@ -111,8 +132,13 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     case "ping":
       if (typeof parsed.t !== "number" || !Number.isFinite(parsed.t)) return null;
       return { type: "ping", t: parsed.t };
-    case "end":
-      return { type: "end" };
+    case "end": {
+      const ttfa = parsed.timeToFirstAudioMs;
+      return {
+        type: "end",
+        timeToFirstAudioMs: typeof ttfa === "number" && Number.isFinite(ttfa) ? ttfa : null,
+      };
+    }
     default:
       return null;
   }

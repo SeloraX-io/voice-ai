@@ -10,6 +10,7 @@ import { VoiceControls } from "@/components/voice/VoiceControls";
 import { VoiceOrb } from "@/components/voice/VoiceOrb";
 import { VoiceWaveform } from "@/components/voice/VoiceWaveform";
 import type { VoiceSessionController } from "@/hooks/useVoiceSession";
+import { BDT_PER_USD, formatBdt, formatUsd } from "@/lib/call-logs/pricing";
 import type { VoiceStatus } from "@/lib/gemini/types";
 import { cn } from "@/lib/utils";
 
@@ -87,6 +88,36 @@ export function PreviewSession({
         </button>
         {sessionOpen && (
           <div className="mt-2 flex flex-col gap-3">
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-2)] px-5 py-3">
+              <div className="flex items-baseline justify-between gap-4">
+                <span className="text-xs text-[var(--text-muted)]">Estimated cost</span>
+                <span className="text-right">
+                  {/* An em dash, not a zero — before the first usage report we do
+                      not know the cost, and zero would read as "this was free". */}
+                  <span className="block font-mono text-sm font-semibold tabular-nums text-[var(--text)]">
+                    {voice.costUsd === null ? "—" : formatBdt(voice.costUsd)}
+                  </span>
+                  {voice.costUsd !== null && (
+                    // Google bills in dollars; taka is a conversion, so the
+                    // source figure stays visible rather than being replaced.
+                    <span className="block font-mono text-[11px] tabular-nums text-[var(--text-dim)]">
+                      {formatUsd(voice.costUsd)}
+                    </span>
+                  )}
+                </span>
+              </div>
+              {voice.usage && (
+                <p className="mt-1 font-mono text-[11px] tabular-nums text-[var(--text-dim)]">
+                  in {voice.usage.inputAudioTokens.toLocaleString()} audio ·{" "}
+                  {voice.usage.inputTextTokens.toLocaleString()} text — out{" "}
+                  {voice.usage.outputAudioTokens.toLocaleString()} audio
+                </p>
+              )}
+              <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-dim)]">
+                At paid-tier rates for this model, converted at {BDT_PER_USD} BDT to the dollar. A key on the free tier is billed nothing.
+              </p>
+            </div>
+
             <ConnectionStatus
               status={voice.status}
               session={voice.session}
