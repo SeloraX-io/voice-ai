@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { useAgentConfig } from "@/components/agent-config/AgentConfigProvider";
 import { SaveBar } from "@/components/agent-config/SaveBar";
@@ -28,8 +28,11 @@ export function ConsoleChrome({ children }: { children: React.ReactNode }) {
   // tester when a later save has left the running call on stale settings.
   const [callStartedWith, setCallStartedWith] = useState<string | null>(null);
 
+  const [callSeconds, setCallSeconds] = useState(0);
+
   const startCall = useCallback(async () => {
     setCallStartedWith(config.updatedAt);
+    setCallSeconds(0);
     await voice.start();
   }, [config.updatedAt, voice]);
 
@@ -37,18 +40,34 @@ export function ConsoleChrome({ children }: { children: React.ReactNode }) {
     const ok = await save();
     if (!ok) return; // The provider has already routed to the failing field.
     setCallStartedWith(config.updatedAt);
+    setCallSeconds(0);
     await voice.start();
   }, [save, config.updatedAt, voice]);
 
   const callActive = voice.status !== "idle" && voice.status !== "error";
-  // `callStartedWith` only matters while a call is active; once the call ends
-  // this reads as "no call running" without a dedicated effect to reset it —
-  // avoids setState-in-effect, which this codebase's lint config forbids.
+  // Both of these only matter while a call is active; once the call ends they
+  // read as "no call running" / "0 seconds" purely by being gated here, rather
+  // than through a dedicated effect that resets them — this codebase's lint
+  // config forbids calling setState directly in an effect body.
   const activeCallStartedWith = callActive ? callStartedWith : null;
+  const displayedCallSeconds = callActive ? callSeconds : 0;
+
+  useEffect(() => {
+    if (!callActive) return;
+    // A plain interval is enough here: this drives a once-per-second label, not
+    // anything the audio path depends on. The counter is reset to 0 by
+    // startCall/saveAndStartCall so each call begins from zero.
+    const timer = setInterval(() => setCallSeconds((value) => value + 1), 1000);
+    return () => clearInterval(timer);
+  }, [callActive]);
 
   return (
     <div className="flex min-h-dvh flex-col md:flex-row">
-      <Sidebar onTestAgent={() => setPreviewOpen(true)} callActive={false} callSeconds={0} />
+      <Sidebar
+        onTestAgent={() => setPreviewOpen(true)}
+        callActive={callActive}
+        callSeconds={displayedCallSeconds}
+      />
 
       <div className="flex min-w-0 flex-1 flex-col">
         <main className="flex-1 px-6 py-8">
