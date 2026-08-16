@@ -1,0 +1,127 @@
+/**
+ * Persistence for the agent configuration.
+ *
+ * Two processes read this: the Next route handlers and the voice gateway. A
+ * file on disk is the meeting point, so neither needs to know the other exists.
+ * Writes go through a temp file and a rename, which is atomic on the same
+ * filesystem — a crash mid-write can never truncate a good config.
+ *
+ * Secret values live in their own file, mode 0600 and gitignored. They are
+ * never returned by `read()`, and nothing outside this module reads them.
+ */
+
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import path from "node:path";
+
+import { DEFAULT_AGENT_CONFIG } from "../../lib/agent-config/defaults";
+import { AGENT_CONFIG_VERSION, LIMITS, SECRET_KEY_RE, type AgentConfig } from "../../lib/agent-config/schema";
+
+export type StoreLogger = (message: string) => void;
+
+export interface ConfigStore {
+  /** The saved config, or the seed defaults if none is readable. Never throws. */
+  read(): Promise<AgentConfig>;
+  /** Persists a config, stamping `updatedAt`. Returns what was written. */
+  write(config: AgentConfig): Promise<AgentConfig>;
+  listSecretKeys(): Promise<string[]>;
+  setSecret(key: string, value: string): Promise<void>;
+  deleteSecret(key: string): Promise<void>;
+}
+
+function isMissing(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === "ENOENT";
+}
+
+export function createConfigStore(dataDir: string, log: StoreLogger = () => {}): ConfigStore {
+  const configPath = path.join(dataDir, "agent-config.json");
+  const secretsPath = path.join(dataDir, "agent-secrets.json");
+
+  async function writeAtomic(target: string, contents: string, mode: number): Promise<void> {
+    await mkdir(dataDir, { recursive: true });
+    const temp = `${target}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temp, contents, { encoding: "utf8", mode });
+      await rename(temp, target);
+    } catch (cause) {
+      await unlink(temp).catch(() => undefined);
+      throw cause;
+    }
+  }
+
+  async function readSecrets(): Promise<Record<string, string>> {
+    try {
+      const parsed: unknown = JSON.parse(await readFile(secretsPath, "utf8"));
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+      return parsed as Record<string, string>;
+    } catch (error) {
+      if (!isMissing(error)) log(`agent-secrets.json is unreadable: ${String(error)}`);
+      return {};
+    }
+  }
+
+  return {
+    async read(): Promise<AgentConfig> {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(await readFile(configPath, "utf8"));
+      } catch (error) {
+        // A missing file is the first-run path, not a failure.
+        if (!isMissing(error)) {
+          log(`agent-config.json is unreadable, using defaults: ${String(error)}`);
+        }
+        return { ...DEFAULT_AGENT_CONFIG };
+      }
+
+      const record = parsed as Partial<AgentConfig> | null;
+      if (typeof record !== "object" || record === null) {
+        log("agent-config.json is not an object, using defaults");
+        return { ...DEFAULT_AGENT_CONFIG };
+      }
+      if (record.version !== AGENT_CONFIG_VERSION) {
+        // Left on disk untouched so the user's data stays recoverable.
+        log(`agent-config.json has unsupported version ${String(record.version)}, using defaults`);
+        return { ...DEFAULT_AGENT_CONFIG };
+      }
+
+      return { ...DEFAULT_AGENT_CONFIG, ...record, secretKeys: [] };
+    },
+
+    async write(config: AgentConfig): Promise<AgentConfig> {
+      const saved: AgentConfig = {
+        ...config,
+        version: AGENT_CONFIG_VERSION,
+        secretKeys: [],
+        updatedAt: new Date().toISOString(),
+      };
+      await writeAtomic(configPath, `${JSON.stringify(saved, null, 2)}\n`, 0o644);
+      return saved;
+    },
+
+    async listSecretKeys(): Promise<string[]> {
+      return Object.keys(await readSecrets()).sort();
+    },
+
+    async setSecret(key: string, value: string): Promise<void> {
+      if (!SECRET_KEY_RE.test(key) || key.length > LIMITS.secretKeyMax) {
+        throw new Error("Secret key must be UPPER_SNAKE_CASE.");
+      }
+      if (value.length > LIMITS.secretValueMax) {
+        throw new Error(`Secret value must be at most ${LIMITS.secretValueMax} characters.`);
+      }
+      const secrets = await readSecrets();
+      secrets[key] = value;
+      await writeAtomic(secretsPath, `${JSON.stringify(secrets, null, 2)}\n`, 0o600);
+    },
+
+    async deleteSecret(key: string): Promise<void> {
+      const secrets = await readSecrets();
+      if (!(key in secrets)) return;
+      delete secrets[key];
+      await writeAtomic(secretsPath, `${JSON.stringify(secrets, null, 2)}\n`, 0o600);
+    },
+  };
+}
+
+/** The instance every caller in this process should use. */
+export const configStore = createConfigStore(path.join(process.cwd(), "data"));
