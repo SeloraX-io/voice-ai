@@ -16,7 +16,11 @@ import {
 } from "@google/genai";
 
 import { AGENT_VOICE, LIVE_MODEL } from "../../lib/gemini/types";
-import { CALL_CENTER_SYSTEM_INSTRUCTION, LIVE_GENERATION_SETTINGS } from "./agent-config";
+import {
+  AGENT_LANGUAGE_CODE,
+  CALL_CENTER_SYSTEM_INSTRUCTION,
+  LIVE_GENERATION_SETTINGS,
+} from "./agent-config";
 
 export interface GeminiSessionEvents {
   /** Base64 PCM16 @ 24 kHz, emitted per chunk with zero buffering. */
@@ -67,6 +71,9 @@ export class GeminiVoiceSession {
         topP: LIVE_GENERATION_SETTINGS.topP,
         speechConfig: {
           voiceConfig: { prebuiltVoiceConfig: { voiceName: AGENT_VOICE } },
+          // Pins TTS to Bangla phonetics so the prompt's language rule is not
+          // fighting a synthesiser that defaults to English.
+          languageCode: AGENT_LANGUAGE_CODE,
         },
         // Live transcripts for both sides of the call.
         inputAudioTranscription: {},

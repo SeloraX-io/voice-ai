@@ -19,7 +19,10 @@ import {
   UPLOAD_UNDERSTANDING_MODEL,
   type UploadAnalysis,
 } from "@/lib/gemini/types";
-import { CALL_CENTER_SYSTEM_INSTRUCTION } from "@/server/voice/agent-config";
+import {
+  AGENT_LANGUAGE_CODE,
+  CALL_CENTER_SYSTEM_INSTRUCTION,
+} from "@/server/voice/agent-config";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -113,7 +116,8 @@ export async function POST(request: Request): Promise<NextResponse> {
             {
               text:
                 "This is a recording of a customer calling support. " +
-                "Transcribe exactly what the customer says, then write the reply you would speak back to them.",
+                "Transcribe exactly what the customer says, in whatever language they used. " +
+                "Then write the reply you would speak back to them — the reply must be in Bangla.",
             },
           ],
         },
@@ -130,7 +134,8 @@ export async function POST(request: Request): Promise<NextResponse> {
             },
             reply: {
               type: Type.STRING,
-              description: "The support agent's spoken reply. One or two sentences.",
+              description:
+                "The support agent's spoken reply, written in Bangla. One or two sentences.",
             },
           },
           required: ["transcript", "reply"],
@@ -154,7 +159,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       contents: parsed.reply,
       config: {
         responseModalities: ["AUDIO"],
-        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: AGENT_VOICE } } },
+        speechConfig: {
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: AGENT_VOICE } },
+          languageCode: AGENT_LANGUAGE_CODE,
+        },
       },
     });
     const synthesisMs = Date.now() - synthesisStartedAt;
