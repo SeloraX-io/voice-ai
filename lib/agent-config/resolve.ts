@@ -7,7 +7,13 @@
  */
 
 import { END_CALL_TOOL_NAME } from "./tool-declarations";
-import type { AgentConfig, CallEndingConfig, ModelsConfig, WelcomeConfig } from "./schema";
+import type {
+  AgentConfig,
+  CallEndingConfig,
+  ModelsConfig,
+  SummaryConfig,
+  WelcomeConfig,
+} from "./schema";
 import type { ToolsConfig } from "./tools";
 import { interpolate } from "./template";
 
@@ -17,6 +23,7 @@ export interface ResolvedAgentConfig {
   instructions: string;
   welcome: WelcomeConfig;
   callEnding: CallEndingConfig;
+  summary: SummaryConfig;
   models: ModelsConfig;
   tools: ToolsConfig;
 }
@@ -33,6 +40,7 @@ export function resolveAgentConfig(config: AgentConfig): ResolvedAgentConfig {
       ...config.callEnding,
       policy: interpolate(config.callEnding.policy, config.variables),
     },
+    summary: config.summary,
     models: config.models,
     tools: config.tools,
   };

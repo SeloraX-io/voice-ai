@@ -7,7 +7,7 @@
  */
 
 import type { AgentConfig } from "./schema";
-import { AGENT_CONFIG_VERSION, DEFAULT_END_CALL_POLICY } from "./schema";
+import { AGENT_CONFIG_VERSION, DEFAULT_END_CALL_POLICY, DEFAULT_SUMMARY_MODEL } from "./schema";
 
 export const DEFAULT_INSTRUCTIONS = `You are a professional customer support voice agent for an online retailer. You are speaking with a customer on a phone call.
 
@@ -43,6 +43,11 @@ export const DEFAULT_AGENT_CONFIG: AgentConfig = {
   version: AGENT_CONFIG_VERSION,
   type: "open_ended",
   instructions: DEFAULT_INSTRUCTIONS,
+  summary: {
+    enabled: true,
+    language: "en",
+    model: DEFAULT_SUMMARY_MODEL,
+  },
   callEnding: {
     enabled: true,
     policy: DEFAULT_END_CALL_POLICY,
@@ -56,6 +61,7 @@ export const DEFAULT_AGENT_CONFIG: AgentConfig = {
     liveModel: "gemini-3.1-flash-live-preview",
     voice: "Kore",
     languageCode: "bn-IN",
+    transcripts: true,
     temperature: 0.7,
     topP: 0.9,
     vad: {

@@ -36,6 +36,25 @@ export const DEFAULT_RATES: Record<string, ModelRates> = {
   },
 };
 
+/**
+ * Text models used after a call, for summarising. Priced separately because a
+ * summary is charged on top of the call and should never be hidden inside it.
+ *
+ * From https://ai.google.dev/gemini-api/docs/pricing on 2026-08-16, paid tier.
+ */
+export const SUMMARY_RATES: Record<string, { inputPerMillion: number; outputPerMillion: number }> = {
+  "gemini-2.5-flash": { inputPerMillion: 0.3, outputPerMillion: 2.5 },
+  "gemini-2.5-flash-lite": { inputPerMillion: 0.1, outputPerMillion: 0.4 },
+};
+
+export function summaryCostUsd(model: string, inputTokens: number, outputTokens: number): number {
+  const rates = SUMMARY_RATES[model] ?? SUMMARY_RATES["gemini-2.5-flash"];
+  return (
+    (inputTokens / 1_000_000) * rates.inputPerMillion +
+    (outputTokens / 1_000_000) * rates.outputPerMillion
+  );
+}
+
 /** The model the app ships with, and the fallback for anything unrecognised. */
 const FALLBACK_MODEL = "gemini-3.1-flash-live-preview";
 

@@ -29,6 +29,12 @@ export interface CallLogStore {
   /** Newest first. Never throws — a broken file reads as an empty history. */
   read(): Promise<CallRecord[]>;
   append(record: CallRecord): Promise<void>;
+  /**
+   * Amends a record in place, for detail that arrives after the call — the
+   * summary is written once the transcript has been through a text model.
+   * A record that has since fallen off the end of the history is a no-op.
+   */
+  update(id: string, patch: (record: CallRecord) => CallRecord): Promise<void>;
 }
 
 function isMissing(error: unknown): boolean {
@@ -64,10 +70,32 @@ export function createCallLogStore(dataDir: string, log: StoreLogger = () => {})
     return parsed as CallRecord[];
   }
 
+  async function writeAll(records: CallRecord[]): Promise<void> {
+    await mkdir(dataDir, { recursive: true });
+    const temp = `${file}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temp, `${JSON.stringify(records, null, 2)}\n`, { encoding: "utf8", mode: 0o644 });
+      await rename(temp, file);
+    } catch (cause) {
+      await unlink(temp).catch(() => undefined);
+      throw cause;
+    }
+  }
+
   return {
     async read(): Promise<CallRecord[]> {
       const records = await readAll();
       return [...records].reverse();
+    },
+
+    async update(id: string, patch: (record: CallRecord) => CallRecord): Promise<void> {
+      await enqueue(async () => {
+        const records = await readAll();
+        const index = records.findIndex((entry) => entry.id === id);
+        if (index === -1) return;
+        records[index] = patch(records[index]);
+        await writeAll(records);
+      });
     },
 
     async append(record: CallRecord): Promise<void> {
@@ -75,16 +103,7 @@ export function createCallLogStore(dataDir: string, log: StoreLogger = () => {})
         const records = await readAll();
         records.push(record);
 
-        const kept = records.slice(-MAX_RECORDS);
-        await mkdir(dataDir, { recursive: true });
-        const temp = `${file}.${randomUUID()}.tmp`;
-        try {
-          await writeFile(temp, `${JSON.stringify(kept, null, 2)}\n`, { encoding: "utf8", mode: 0o644 });
-          await rename(temp, file);
-        } catch (cause) {
-          await unlink(temp).catch(() => undefined);
-          throw cause;
-        }
+        await writeAll(records.slice(-MAX_RECORDS));
       });
     },
   };

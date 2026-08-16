@@ -129,9 +129,11 @@ export class GeminiVoiceSession {
           // synthesiser that defaults to English.
           languageCode: agent.models.languageCode,
         },
-        // Live transcripts for both sides of the call.
-        inputAudioTranscription: {},
-        outputAudioTranscription: {},
+        // Live transcripts for both sides of the call. Omitted entirely when
+        // switched off — passing an empty object is what enables them.
+        ...(agent.models.transcripts
+          ? { inputAudioTranscription: {}, outputAudioTranscription: {} }
+          : {}),
         // Server-side VAD owns turn taking and interruption.
         realtimeInputConfig: {
           automaticActivityDetection: {

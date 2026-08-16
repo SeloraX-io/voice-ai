@@ -4,6 +4,7 @@ import type { TabProps } from "@/components/agent-config/AgentConfigProvider";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { LIMITS, type ModelsConfig, type VadConfig } from "@/lib/agent-config/schema";
 
 /** Gemini prebuilt voices available to the Live API. */
@@ -119,6 +120,33 @@ export function ModelsVoiceTab({ config, update, errors }: TabProps) {
               ))}
             </Select>
           </Field>
+        </div>
+      </section>
+
+      <section className="flex flex-col gap-4">
+        <div>
+          <h2 className="text-sm font-medium text-[var(--text)]">Transcripts</h2>
+          <p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">
+            Live text of both sides of the call, shown in the preview panel and used for the
+            conversation transcript. The audio is unaffected either way.
+          </p>
+        </div>
+
+        <div className="flex items-start gap-3">
+          <Switch
+            label="Transcribe the conversation"
+            checked={models.transcripts}
+            onCheckedChange={(transcripts) => patch({ transcripts })}
+          />
+          <div>
+            <p className="text-sm font-medium text-[var(--text)]">Transcribe the conversation</p>
+            <p className="mt-0.5 text-xs leading-relaxed text-[var(--text-muted)]">
+              Off means no conversation text anywhere — the transcript stays empty and the call log
+              records only usage. It is not a cost saving: measured on this model, transcripts were
+              billed as zero output-text tokens either way. Turn it off for privacy or quiet, not
+              to save money.
+            </p>
+          </div>
         </div>
       </section>
 

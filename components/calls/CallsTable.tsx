@@ -1,41 +1,51 @@
 /**
  * The call history table.
  *
- * A server component: nothing here is interactive, so there is no reason to
- * ship it to the browser. Figures are estimates at paid-tier rates, and the
- * page says so once rather than repeating the caveat on every row.
+ * A server component: nothing here is interactive beyond links, so there is no
+ * reason to ship it to the browser.
+ *
+ * The columns are chosen for scanning, not completeness — when, how long, how
+ * it ended, what it was about, what it cost. Token counts and latency live in
+ * the detail view instead: nobody compares those across rows, and putting them
+ * here crushed the one column people actually read.
  */
+
+import Link from "next/link";
 
 import { BDT_PER_USD, formatBdt, formatUsd } from "@/lib/call-logs/pricing";
 import type { CallRecord } from "@/lib/call-logs/types";
 
 function formatDuration(ms: number): string {
   const total = Math.round(ms / 1000);
-  const minutes = Math.floor(total / 60);
-  const seconds = total % 60;
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
-function formatWhen(iso: string): string {
+function formatDay(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-const ENDED_LABEL: Record<CallRecord["endedBy"], string> = {
-  caller: "Hung up",
-  agent: "Agent ended",
-  error: "Error",
-  shutdown: "Restart",
+function formatTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+const ENDED: Record<CallRecord["endedBy"], { label: string; tone: string }> = {
+  caller: { label: "Hung up", tone: "text-[var(--text-muted)]" },
+  agent: { label: "Agent ended", tone: "text-[var(--warning)]" },
+  error: { label: "Error", tone: "text-[var(--danger)]" },
+  shutdown: { label: "Restart", tone: "text-[var(--text-dim)]" },
 };
 
 export function CallsTable({ calls }: { calls: CallRecord[] }) {
-  const totalUsd = calls.reduce((sum, call) => sum + call.cost.totalUsd, 0);
+  // Summaries are billed on top of the calls, so a total that ignored them
+  // would quietly under-report the spend.
+  const totalUsd = calls.reduce(
+    (sum, call) => sum + call.cost.totalUsd + (call.summary?.usd ?? 0),
+    0,
+  );
   const totalMs = calls.reduce((sum, call) => sum + call.durationMs, 0);
 
   return (
@@ -43,10 +53,8 @@ export function CallsTable({ calls }: { calls: CallRecord[] }) {
       <div>
         <h1 className="text-lg font-semibold tracking-tight text-[var(--text)]">Calls</h1>
         <p className="mt-1 text-sm text-[var(--text-muted)]">
-          What each call cost, estimated at this model&rsquo;s paid-tier rates. A key on the free
-          tier is billed nothing. Records are written when a call ends, and the most recent 500 are
-          kept in <code className="font-mono text-xs">data/call-logs.json</code>. Google bills in US
-          dollars; taka figures are converted at {BDT_PER_USD} BDT to the dollar.
+          Every call, what it was about and what it cost. Select one to see its transcript and what
+          the agent did.
         </p>
       </div>
 
@@ -60,69 +68,101 @@ export function CallsTable({ calls }: { calls: CallRecord[] }) {
           <div className="grid gap-3 sm:grid-cols-3">
             <Stat label="Calls" value={String(calls.length)} />
             <Stat label="Total time" value={formatDuration(totalMs)} />
-            <Stat label="Estimated spend" value={formatBdt(totalUsd)} sub={formatUsd(totalUsd)} emphasis />
+            <Stat
+              label="Estimated spend"
+              value={formatBdt(totalUsd)}
+              sub={formatUsd(totalUsd)}
+              emphasis
+            />
           </div>
 
-          {/* The table scrolls inside its own container so the page never
-              scrolls sideways on a narrow window. */}
+          {/* Scrolls inside its own container so the page never scrolls sideways. */}
           <div className="scroll-slim overflow-x-auto rounded-xl border border-[var(--border)]">
-            <table className="w-full min-w-[46rem] border-collapse text-sm">
+            <table className="w-full min-w-[44rem] border-collapse text-sm">
               <thead>
-                <tr className="border-b border-[var(--border)] bg-[var(--surface-2)] text-left">
+                <tr className="border-b border-[var(--border)] bg-[var(--surface-2)]">
                   <Th>When</Th>
-                  <Th>Duration</Th>
-                  <Th numeric>Audio in</Th>
-                  <Th numeric>Audio out</Th>
+                  <Th numeric>Length</Th>
                   <Th numeric>Turns</Th>
-                  <Th numeric>First audio</Th>
                   <Th>Ended</Th>
+                  <Th>Summary</Th>
                   <Th numeric>Cost</Th>
                 </tr>
               </thead>
               <tbody>
-                {calls.map((call) => (
-                  <tr key={call.id} className="border-b border-[var(--border)] last:border-0">
-                    <Td>{formatWhen(call.startedAt)}</Td>
-                    <Td numeric>{formatDuration(call.durationMs)}</Td>
-                    <Td numeric>{call.usage.inputAudioTokens.toLocaleString()}</Td>
-                    <Td numeric>{call.usage.outputAudioTokens.toLocaleString()}</Td>
-                    <Td numeric>{call.turns}</Td>
-                    <Td numeric>
-                      {call.timeToFirstAudioMs === null
-                        ? "—"
-                        : `${Math.round(call.timeToFirstAudioMs)} ms`}
-                    </Td>
-                    <Td>
-                      <span
-                        className={
-                          call.endedBy === "error"
-                            ? "text-[var(--danger)]"
-                            : "text-[var(--text-muted)]"
-                        }
-                      >
-                        {ENDED_LABEL[call.endedBy]}
-                      </span>
-                      {/* Why the agent hung up is the one thing worth knowing
-                          when reviewing a call it ended itself. */}
-                      {call.endReason && (
-                        <span className="block max-w-[16rem] truncate text-[11px] text-[var(--text-dim)]">
-                          {call.endReason}
+                {calls.map((call) => {
+                  const ended = ENDED[call.endedBy];
+                  const callTotal = call.cost.totalUsd + (call.summary?.usd ?? 0);
+
+                  return (
+                    <tr
+                      key={call.id}
+                      className="border-b border-[var(--border)] transition-colors last:border-0 hover:bg-[var(--surface-2)]"
+                    >
+                      <Td>
+                        {/* A real link, so it can be middle-clicked or opened in
+                            a new tab — a row with an onClick can do neither. */}
+                        <Link
+                          href={`/calls/${call.id}`}
+                          className="block whitespace-nowrap underline-offset-2 hover:underline"
+                        >
+                          <span className="block font-medium text-[var(--text)]">
+                            {formatDay(call.startedAt)}
+                          </span>
+                          <span className="block text-xs text-[var(--text-dim)]">
+                            {formatTime(call.startedAt)}
+                          </span>
+                        </Link>
+                      </Td>
+
+                      <Td numeric>{formatDuration(call.durationMs)}</Td>
+                      <Td numeric>{call.turns}</Td>
+
+                      <Td>
+                        <span
+                          className={`block whitespace-nowrap text-xs font-medium ${ended.tone}`}
+                        >
+                          {ended.label}
                         </span>
-                      )}
-                    </Td>
-                    <Td numeric>
-                      <span className="block font-semibold text-[var(--text)]">
-                        {formatBdt(call.cost.totalUsd)}
-                      </span>
-                      <span className="block text-[11px] text-[var(--text-dim)]">
-                        {formatUsd(call.cost.totalUsd)}
-                      </span>
-                    </Td>
-                  </tr>
-                ))}
+                        {call.endReason && (
+                          <span className="mt-0.5 block max-w-[11rem] truncate text-[11px] text-[var(--text-dim)]">
+                            {call.endReason}
+                          </span>
+                        )}
+                      </Td>
+
+                      {/* The widest column on purpose: it is the one people read. */}
+                      <Td>
+                        {call.summary ? (
+                          <span className="line-clamp-2 max-w-[28rem] text-xs leading-relaxed text-[var(--text-muted)]">
+                            {call.summary.text}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-[var(--text-dim)]">—</span>
+                        )}
+                      </Td>
+
+                      <Td numeric>
+                        <span className="block whitespace-nowrap font-semibold text-[var(--text)]">
+                          {formatBdt(callTotal)}
+                        </span>
+                        <span className="block whitespace-nowrap text-[11px] text-[var(--text-dim)]">
+                          {formatUsd(callTotal)}
+                        </span>
+                      </Td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
+
+          <p className="text-xs leading-relaxed text-[var(--text-dim)]">
+            Estimated at this model&rsquo;s paid-tier rates — a key on the free tier is billed
+            nothing. Google bills in US dollars; taka is converted at {BDT_PER_USD} to the dollar.
+            The most recent 500 calls are kept in{" "}
+            <code className="font-mono">data/call-logs.json</code>.
+          </p>
         </>
       )}
     </div>
@@ -159,8 +199,8 @@ function Th({ children, numeric }: { children: React.ReactNode; numeric?: boolea
   return (
     <th
       scope="col"
-      className={`px-4 py-2.5 text-xs font-semibold text-[var(--text-muted)] ${
-        numeric ? "text-right" : ""
+      className={`whitespace-nowrap px-4 py-2.5 text-xs font-semibold text-[var(--text-muted)] ${
+        numeric ? "text-right" : "text-left"
       }`}
     >
       {children}
@@ -171,7 +211,7 @@ function Th({ children, numeric }: { children: React.ReactNode; numeric?: boolea
 function Td({ children, numeric }: { children: React.ReactNode; numeric?: boolean }) {
   return (
     <td
-      className={`px-4 py-2.5 text-[var(--text-muted)] ${
+      className={`px-4 py-3 align-top text-[var(--text-muted)] ${
         numeric ? "text-right font-mono tabular-nums" : ""
       }`}
     >

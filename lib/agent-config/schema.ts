@@ -49,6 +49,17 @@ export interface VadConfig {
 }
 
 export interface ModelsConfig {
+  /**
+   * Ask Gemini for live transcripts of both sides of the call.
+   *
+   * Turning it off means the console shows no conversation text — the audio is
+   * unaffected.
+   *
+   * Not a cost control. Measured against this model, output-text tokens were
+   * zero whether transcripts were on or off, so this saves privacy and noise
+   * rather than money.
+   */
+  transcripts: boolean;
   liveModel: string;
   voice: string;
   languageCode: string;
@@ -81,6 +92,16 @@ hard to understand. Those are the calls you are for.
 Always say a short closing line first, then end the call — the line is spoken
 before the call actually ends.`;
 
+export type SummaryLanguage = "en" | "bn";
+
+/** An after-the-call summary, written by a text model. */
+export interface SummaryConfig {
+  enabled: boolean;
+  language: SummaryLanguage;
+  /** The text model that writes it. Cheap by design; this is not a live model. */
+  model: string;
+}
+
 /** Whether and when the agent may hang up on its own. */
 export interface CallEndingConfig {
   enabled: boolean;
@@ -98,6 +119,7 @@ export interface AgentConfig {
   instructions: string;
   welcome: WelcomeConfig;
   callEnding: CallEndingConfig;
+  summary: SummaryConfig;
   models: ModelsConfig;
   agentName: string;
   variables: AgentVariable[];
@@ -232,6 +254,11 @@ function validateModels(value: unknown, errors: FieldError[]): ModelsConfig {
     liveModel,
     voice,
     languageCode,
+    // Absent on every config saved before the toggle existed; defaulting true
+    // preserves exactly what those calls did.
+    transcripts: record.transcripts === undefined
+      ? true
+      : readBoolean(record.transcripts, "models.transcripts", errors),
     temperature: readNumber(record.temperature, "models.temperature", LIMITS.temperature, errors, 0.7),
     topP: readNumber(record.topP, "models.topP", LIMITS.topP, errors, 0.9),
     vad: validateVad(record.vad, errors),
@@ -297,6 +324,43 @@ function validateCallEnding(value: unknown, errors: FieldError[]): CallEndingCon
   return { enabled, policy };
 }
 
+const SUMMARY_LANGUAGES: readonly SummaryLanguage[] = ["en", "bn"];
+
+/** The default summariser: the cheapest model that writes a usable paragraph. */
+export const DEFAULT_SUMMARY_MODEL = "gemini-2.5-flash";
+
+/**
+ * Absent on every configuration saved before summaries existed.
+ *
+ * Defaults to ON, matching a freshly seeded config — the alternative is a
+ * setting that silently does nothing for existing agents. Each summary costs a
+ * fraction of a cent and is recorded separately in the call log, so the spend
+ * is visible rather than folded into the call.
+ */
+function validateSummary(value: unknown, errors: FieldError[]): SummaryConfig {
+  const fallback: SummaryConfig = {
+    enabled: true,
+    language: "en",
+    model: DEFAULT_SUMMARY_MODEL,
+  };
+  if (value === undefined) return fallback;
+
+  const record = asRecord(value);
+  if (!record) {
+    errors.push({ path: "summary", message: "Must be an object." });
+    return fallback;
+  }
+
+  const model = readString(record.model, "summary.model", errors, DEFAULT_SUMMARY_MODEL).trim();
+  if (model === "") errors.push({ path: "summary.model", message: "Required." });
+
+  return {
+    enabled: readBoolean(record.enabled, "summary.enabled", errors),
+    language: readEnum(record.language, "summary.language", SUMMARY_LANGUAGES, errors, "en"),
+    model,
+  };
+}
+
 /**
  * Validates an untrusted config. Errors accumulate rather than short-circuit so
  * the form can highlight every bad field at once.
@@ -338,6 +402,7 @@ export function validateAgentConfig(input: unknown): ValidationResult {
 
   const welcome = validateWelcome(record.welcome, errors);
   const callEnding = validateCallEnding(record.callEnding, errors);
+  const summary = validateSummary(record.summary, errors);
   const models = validateModels(record.models, errors);
   const variables = validateVariables(record.variables, errors);
   const tools = validateTools(record.tools, errors);
@@ -352,6 +417,7 @@ export function validateAgentConfig(input: unknown): ValidationResult {
       instructions,
       welcome,
       callEnding,
+      summary,
       models,
       agentName,
       variables,

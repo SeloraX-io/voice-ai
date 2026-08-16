@@ -13,7 +13,14 @@ import { WebSocketServer, type RawData, type WebSocket } from "ws";
 
 import { base64ToPcm16, pcm16Rms } from "../../lib/audio/pcm";
 import { computeCost, ratesFor, usageFromReport } from "../../lib/call-logs/pricing";
-import { EMPTY_USAGE, type CallRecord, type CallUsage } from "../../lib/call-logs/types";
+import {
+  EMPTY_USAGE,
+  type CallEvent,
+  type CallRecord,
+  type CallUsage,
+  type TranscriptLine,
+} from "../../lib/call-logs/types";
+import type { SummaryConfig } from "../../lib/agent-config/schema";
 import { callLogStore } from "../config/call-log-store";
 import {
   INPUT_SAMPLE_RATE,
@@ -27,6 +34,7 @@ import { END_CALL_TOOL_NAME } from "../../lib/agent-config/tool-declarations";
 import type { ResolvedAgentConfig } from "../../lib/agent-config/resolve";
 import { configStore } from "../config/store";
 import { GeminiVoiceSession, loadResolvedAgentConfig, type LiveFunctionCall } from "./gemini-session";
+import { summariseCall } from "./summarizer";
 import { executeHttpTool } from "./tool-runner";
 import { EnergyVad } from "./vad";
 
@@ -86,8 +94,50 @@ interface CallState {
   pendingHangup: boolean;
   /** The reason the model gave, recorded in the call log. */
   endReason: string | null;
+  /** The conversation, coalesced from streamed fragments. */
+  transcript: TranscriptLine[];
+  /**
+   * Forces the next fragment onto a new line.
+   *
+   * Fragments are merged by speaker, but a turn boundary is also a line break:
+   * without this, an agent that speaks on two consecutive turns — which is
+   * every turn when the caller's side is not transcribed — has its whole call
+   * glued into a single unreadable paragraph.
+   */
+  breakTranscript: boolean;
+  /** What happened during the call, for later debugging. */
+  events: CallEvent[];
+  /** Copied from the config so the record can be written after the call ends. */
+  summaryConfig: SummaryConfig | null;
   /** Carried here so `closeCall` can report a failed write without a new parameter. */
   readonly log: NonNullable<VoiceGatewayOptions["log"]>;
+}
+
+/** Milliseconds since the call began, for placing a line or event in time. */
+function sinceStart(state: CallState): number {
+  return Date.now() - state.startedAt;
+}
+
+function note(state: CallState, kind: CallEvent["kind"], detail: string): void {
+  state.events.push({ atMs: sinceStart(state), kind, detail });
+}
+
+/**
+ * Appends a transcript fragment.
+ *
+ * Gemini streams transcripts a word or two at a time, so consecutive fragments
+ * from the same speaker are merged into one line. Without this the stored
+ * transcript would be hundreds of one-word entries and unreadable.
+ */
+function appendTranscript(state: CallState, speaker: TranscriptLine["speaker"], text: string): void {
+  if (text === "") return;
+  const last = state.transcript.at(-1);
+  if (last && last.speaker === speaker && !state.breakTranscript) {
+    last.text += text;
+    return;
+  }
+  state.breakTranscript = false;
+  state.transcript.push({ speaker, text, atMs: sinceStart(state) });
 }
 
 /**
@@ -162,6 +212,10 @@ async function handleConnection(
     logged: false,
     pendingHangup: false,
     endReason: null,
+    transcript: [],
+    breakTranscript: false,
+    events: [],
+    summaryConfig: null,
     log,
   };
   callStates.set(socket, state);
@@ -206,6 +260,8 @@ async function handleConnection(
 
   const agent = await loadResolvedAgentConfig((message) => log(message, { id: state.id }));
   state.allowGreetingInterrupt = agent.welcome.allowInterrupt;
+  state.summaryConfig = agent.summary;
+  note(state, "connected", `${agent.models.liveModel} · ${agent.models.voice}`);
 
   const endGreeting = () => {
     if (!state.greetingActive) return;
@@ -226,12 +282,24 @@ async function handleConnection(
           }
           send({ type: "audio", data, seq: state.audioSeq++ });
         },
-        onInputTranscript: (text) => send({ type: "transcript", speaker: "user", text, final: false }),
-        onOutputTranscript: (text) =>
-          send({ type: "transcript", speaker: "assistant", text, final: false }),
+        // Gemini keeps sending the assistant's own transcript even when
+        // `outputAudioTranscription` is omitted, so the switch is enforced here
+        // as well. Relying on the request alone would leave the setting saying
+        // one thing and the console showing another.
+        onInputTranscript: (text) => {
+          if (!agent.models.transcripts) return;
+          appendTranscript(state, "user", text);
+          send({ type: "transcript", speaker: "user", text, final: false });
+        },
+        onOutputTranscript: (text) => {
+          if (!agent.models.transcripts) return;
+          appendTranscript(state, "assistant", text);
+          send({ type: "transcript", speaker: "assistant", text, final: false });
+        },
         onInterrupted: () => {
           endGreeting();
           state.interruptions += 1;
+          note(state, "interrupted", "caller spoke over the agent");
           state.assistantSpeaking = false;
           send({ type: "interrupted" });
         },
@@ -244,6 +312,7 @@ async function handleConnection(
         onTurnComplete: () => {
           endGreeting();
           state.turns += 1;
+          state.breakTranscript = true;
           if (state.pendingHangup && !state.closed) {
             setTimeout(() => closeCall(socket, state, 1000, "agent ended call"), HANGUP_GRACE_MS);
           }
@@ -318,6 +387,7 @@ async function handleConnection(
   ) {
     state.greetingActive = true;
     state.greetingGuard = setTimeout(endGreeting, GREETING_GUARD_MS);
+    note(state, "greeting", agent.welcome.message.trim().slice(0, 120));
     gemini.primeGreeting();
   }
 }
@@ -459,11 +529,54 @@ function recordCall(state: CallState, endedBy: CallRecord["endedBy"]): void {
     timeToFirstAudioMs: state.timeToFirstAudioMs,
     endedBy,
     endReason: state.endReason,
+    transcript: state.transcript,
+    events: [...state.events, { atMs: endedAt - state.startedAt, kind: "ended" as const, detail: endedBy }],
+    summary: null,
   };
 
-  void callLogStore.append(record).catch((cause) => {
-    state.log("could not record the call", { id: state.id, error: (cause as Error).name });
+  // Written first, then updated with the summary. The cost and transcript are
+  // the parts that cannot be regenerated, so they are never held hostage to a
+  // summarisation request that might be slow or fail.
+  void callLogStore
+    .append(record)
+    .then(() => attachSummary(record, state))
+    .catch((cause) => {
+      state.log("could not record the call", { id: state.id, error: (cause as Error).name });
+    });
+}
+
+/**
+ * Writes the summary once the record is safely on disk.
+ *
+ * Runs after the call has already ended and after the record exists, so a slow
+ * or failing summariser costs nothing but the summary itself.
+ */
+async function attachSummary(record: CallRecord, state: CallState): Promise<void> {
+  const config = state.summaryConfig;
+  const apiKey = process.env.GEMINI_API_KEY;
+
+  if (!config?.enabled || !apiKey || record.transcript === undefined || record.transcript.length === 0) {
+    return;
+  }
+
+  const summary = await summariseCall(record.transcript, {
+    language: config.language,
+    model: config.model,
+    apiKey,
+    endedBy: record.endedBy,
+    endReason: record.endReason ?? null,
   });
+  if (!summary) {
+    state.log("could not summarise the call", { id: state.id });
+    return;
+  }
+
+  try {
+    await callLogStore.update(record.id, (current) => ({ ...current, summary }));
+    state.log("summarised the call", { id: state.id, usd: summary.usd.toFixed(6) });
+  } catch (cause) {
+    state.log("could not save the summary", { id: state.id, error: (cause as Error).name });
+  }
 }
 
 /**
@@ -500,6 +613,7 @@ async function runToolCalls(
       state.log("agent ended the call", { id: state.id, reason });
       state.endReason = reason;
       state.pendingHangup = true;
+      note(state, "agent_ending", reason);
       // The greeting gate must not outlive the call it was guarding.
       endGreeting();
       const endId = call.id ?? randomUUID();
@@ -515,6 +629,7 @@ async function runToolCalls(
       const missingId = call.id ?? randomUUID();
       send({ type: "tool_call", id: missingId, name, silent: false });
       send({ type: "tool_result", id: missingId, ok: false, durationMs: 0 });
+      note(state, "error", `model called ${name}, which is not configured`);
       responses.push({
         id: call.id,
         name,
@@ -531,15 +646,17 @@ async function runToolCalls(
     const callId = call.id ?? randomUUID();
     const startedAt = Date.now();
     send({ type: "tool_call", id: callId, name, silent: tool.silent });
+    note(state, "tool_call", tool.silent ? `${name} (silent)` : name);
 
     const result = await executeHttpTool(tool, args, secrets);
 
-    send({
-      type: "tool_result",
-      id: callId,
-      ok: result.ok === true,
-      durationMs: Date.now() - startedAt,
-    });
+    const durationMs = Date.now() - startedAt;
+    note(
+      state,
+      "tool_result",
+      `${name} ${result.ok === true ? "ok" : "failed"} in ${durationMs} ms`,
+    );
+    send({ type: "tool_result", id: callId, ok: result.ok === true, durationMs });
     responses.push({ id: call.id, name, response: result });
   }
 

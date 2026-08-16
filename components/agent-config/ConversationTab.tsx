@@ -9,6 +9,7 @@ import { VariableInsertMenu } from "@/components/agent-config/VariableInsertMenu
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field } from "@/components/ui/field";
 import { Switch } from "@/components/ui/switch";
+import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
@@ -154,6 +155,55 @@ export function ConversationTab({ config, update, errors }: TabProps) {
           The greeting is delivered as an instruction to the model, so expect near-verbatim wording
           rather than an exact recording.
         </p>
+      </section>
+
+      <section className="flex flex-col gap-4">
+        <div>
+          <h2 className="text-sm font-medium text-[var(--text)]">Call summary</h2>
+          <p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">
+            After a call ends, write a short summary of what happened and store it with the call.
+            Useful for reviewing a call later without reading the whole transcript.
+          </p>
+        </div>
+
+        <div className="flex items-start gap-3">
+          <Switch
+            label="Summarise calls"
+            checked={config.summary.enabled}
+            onCheckedChange={(enabled) => update({ summary: { ...config.summary, enabled } })}
+          />
+          <div>
+            <p className="text-sm font-medium text-[var(--text)]">Summarise calls</p>
+            <p className="mt-0.5 text-xs leading-relaxed text-[var(--text-muted)]">
+              Costs a fraction of a cent per call, billed on top of the call itself and shown
+              separately under Calls. Needs transcripts to be on — there is nothing to summarise
+              without them.
+            </p>
+          </div>
+        </div>
+
+        <Field
+          label="Summary language"
+          htmlFor="summary-language"
+          description="The summary is written in this language regardless of what was spoken on the call."
+        >
+          <Select
+            id="summary-language"
+            value={config.summary.language}
+            disabled={!config.summary.enabled}
+            onChange={(event) =>
+              update({
+                summary: {
+                  ...config.summary,
+                  language: event.target.value as typeof config.summary.language,
+                },
+              })
+            }
+          >
+            <option value="en">English</option>
+            <option value="bn">Bangla</option>
+          </Select>
+        </Field>
       </section>
 
       <section className="flex flex-col gap-3">

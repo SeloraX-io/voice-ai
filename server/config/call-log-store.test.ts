@@ -103,3 +103,53 @@ test("writes valid JSON that round-trips", async () => {
   assert.equal(parsed.length, 1);
   assert.equal(parsed[0].cost.totalUsd, 0.003);
 });
+
+test("amends a record after the call, for a summary that arrives late", async () => {
+  const store = createCallLogStore(await freshDir());
+  await store.append(record("a"));
+  await store.append(record("b"));
+
+  await store.update("a", (current) => ({
+    ...current,
+    summary: {
+      text: "The caller asked about an order.",
+      language: "en",
+      model: "gemini-2.5-flash",
+      inputTokens: 500,
+      outputTokens: 60,
+      usd: 0.0003,
+    },
+  }));
+
+  const all = await store.read();
+  const amended = all.find((entry) => entry.id === "a");
+  assert.equal(amended?.summary?.text, "The caller asked about an order.");
+  // The other record must be untouched by an update to its neighbour.
+  assert.equal(all.find((entry) => entry.id === "b")?.summary, undefined);
+});
+
+test("updating a record that has aged out is a no-op, not a crash", async () => {
+  const store = createCallLogStore(await freshDir());
+  await store.append(record("only"));
+  await store.update("long-gone", (current) => ({ ...current, turns: 99 }));
+
+  const all = await store.read();
+  assert.equal(all.length, 1);
+  assert.equal(all[0].turns, 2);
+});
+
+test("a summary write does not race an append", async () => {
+  const store = createCallLogStore(await freshDir());
+  await store.append(record("first"));
+
+  // Both go through the same queue, so neither can read-modify-write over the
+  // other — the failure this guards against is a lost record, not a lost field.
+  await Promise.all([
+    store.append(record("second")),
+    store.update("first", (current) => ({ ...current, turns: 42 })),
+  ]);
+
+  const all = await store.read();
+  assert.equal(all.length, 2);
+  assert.equal(all.find((entry) => entry.id === "first")?.turns, 42);
+});
