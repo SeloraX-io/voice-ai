@@ -57,6 +57,44 @@ export function tokenExpiryMs(token: string): number | null {
   }
 }
 
+/** What the browser is allowed to know about the connection — never the token itself. */
+export interface SeloraxSummary {
+  baseUrl: string;
+  storeId: string;
+  hasToken: boolean;
+  tokenExpiresAt: number | null;
+}
+
+/**
+ * Built field by field, not by spreading `config`, so a future field on
+ * `SeloraxConfig` cannot silently reach the browser by being added there.
+ * Shared by `GET /api/selorax` and the settings page's initial server render,
+ * so the two cannot drift on what "configured" means.
+ */
+export function toSeloraxSummary(config: SeloraxConfig): SeloraxSummary {
+  const hasToken = config.authToken.length > 0;
+  return {
+    baseUrl: config.baseUrl,
+    storeId: config.storeId,
+    hasToken,
+    tokenExpiresAt: hasToken ? tokenExpiryMs(config.authToken) : null,
+  };
+}
+
+/** These tokens last 90 days and lapse silently; warn well before that. */
+export const TOKEN_EXPIRY_WARNING_MS = 14 * 24 * 60 * 60 * 1000;
+
+/**
+ * Whether the operator should be warned about this expiry, `now` passed in so
+ * it stays a pure function a test can pin. A missing expiry (unreadable token,
+ * or none stored) is never itself a warning — the "no token" state already
+ * says so more plainly.
+ */
+export function isTokenExpiringSoon(tokenExpiresAt: number | null, now: number): boolean {
+  if (tokenExpiresAt === null) return false;
+  return tokenExpiresAt - now <= TOKEN_EXPIRY_WARNING_MS;
+}
+
 function read(source: Record<string, unknown>, key: string): string {
   const value = source[key];
   return typeof value === "string" ? value.trim() : "";

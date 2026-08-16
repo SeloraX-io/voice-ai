@@ -28,6 +28,7 @@ export const AGENT_ROUTES: readonly NavRoute[] = [
   { href: "/calls", label: "Calls", group: null },
   { href: "/telephony", label: "Telephony", group: null },
   { href: "/settings/keys", label: "API Keys", group: null },
+  { href: "/settings/selorax", label: "Selorax", group: null },
 ] as const;
 
 /** Routes that edit the agent configuration, so the save bar belongs on them. */

@@ -4,34 +4,18 @@
  * Unlike `app/api/telephony/route.ts`, the auth token here is a Selorax admin
  * JWT, not a per-line SIP password — see `lib/selorax/config.ts` for why it
  * must never reach the browser. GET (and PUT's response) report only whether
- * a token is set and when it expires, built field by field so a future field
- * on `SeloraxConfig` cannot silently reach the response by being spread in.
+ * a token is set and when it expires, via `toSeloraxSummary`, which the
+ * settings page's server render also uses so the two cannot drift on what
+ * "configured" means.
  */
 
 import { NextResponse } from "next/server";
 
-import { tokenExpiryMs, validateSeloraxConfig, type SeloraxConfig } from "@/lib/selorax/config";
+import { toSeloraxSummary, validateSeloraxConfig } from "@/lib/selorax/config";
 import { seloraxStore } from "@/server/config/selorax-store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-interface SeloraxSummary {
-  baseUrl: string;
-  storeId: string;
-  hasToken: boolean;
-  tokenExpiresAt: number | null;
-}
-
-function toSeloraxSummary(config: SeloraxConfig): SeloraxSummary {
-  const hasToken = config.authToken.length > 0;
-  return {
-    baseUrl: config.baseUrl,
-    storeId: config.storeId,
-    hasToken,
-    tokenExpiresAt: hasToken ? tokenExpiryMs(config.authToken) : null,
-  };
-}
 
 export async function GET(): Promise<NextResponse> {
   return NextResponse.json(toSeloraxSummary(await seloraxStore.read()));

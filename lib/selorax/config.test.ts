@@ -4,7 +4,9 @@ import assert from "node:assert/strict";
 import {
   EMPTY_SELORAX_CONFIG,
   isSeloraxConfigured,
+  isTokenExpiringSoon,
   tokenExpiryMs,
+  toSeloraxSummary,
   validateSeloraxConfig,
 } from "./config";
 
@@ -71,4 +73,33 @@ test("an unreadable token has no expiry rather than throwing", () => {
   assert.equal(tokenExpiryMs("not-a-jwt"), null);
   assert.equal(tokenExpiryMs(""), null);
   assert.equal(tokenExpiryMs("a.b.c"), null);
+});
+
+test("toSeloraxSummary never carries the token, only whether one exists", () => {
+  const summary = toSeloraxSummary(VALID);
+  assert.deepEqual(summary, {
+    baseUrl: VALID.baseUrl,
+    storeId: VALID.storeId,
+    hasToken: true,
+    tokenExpiresAt: 1789500000 * 1000,
+  });
+  assert.ok(!("authToken" in summary));
+});
+
+test("toSeloraxSummary reports no expiry when there is no token to have one", () => {
+  const summary = toSeloraxSummary(EMPTY_SELORAX_CONFIG);
+  assert.equal(summary.hasToken, false);
+  assert.equal(summary.tokenExpiresAt, null);
+});
+
+test("isTokenExpiringSoon is false with nothing to warn about", () => {
+  assert.equal(isTokenExpiringSoon(null, Date.now()), false);
+});
+
+test("isTokenExpiringSoon warns inside the 14-day window, and once already lapsed", () => {
+  const now = 1_700_000_000_000;
+  const DAY_MS = 86_400_000;
+  assert.equal(isTokenExpiringSoon(now + 15 * DAY_MS, now), false);
+  assert.equal(isTokenExpiringSoon(now + 14 * DAY_MS, now), true);
+  assert.equal(isTokenExpiringSoon(now - DAY_MS, now), true);
 });

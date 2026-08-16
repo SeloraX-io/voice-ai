@@ -133,6 +133,30 @@ async function claimSeloraxLine(): Promise<TelephonyLine> {
 }
 
 /**
+ * Tells Selorax whether an inbound call was answered or declined, through
+ * `POST /api/telephony/report` — see that route for why it never blocks.
+ * selx-sip's inbound webhook cannot say which extension answered, so this is
+ * the only way an AI-handled call correlates with Selorax's own call log.
+ * Outbound is out of scope: Selorax already correlates calls it places.
+ *
+ * Fire-and-forget by construction: this returns nothing to await, and the
+ * `.catch` is attached where the promise is created, not after, so a
+ * rejection cannot go unhandled. A caller waiting on this round trip would be
+ * a far worse outcome than a call missing from a report — never call this
+ * before answering, only alongside or after.
+ */
+function reportInboundCall(event: "answered" | "declined", callerPhone: string | null): void {
+  if (!callerPhone) return;
+  fetch("/api/telephony/report", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ event, callerPhone }),
+  }).catch((cause) => {
+    console.error(`[selorax] report(${event}) failed:`, cause);
+  });
+}
+
+/**
  * The gateway URL for a phone call, tagged so the resulting call record is
  * told apart from a browser preview.
  *
@@ -432,6 +456,7 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
         // The previous call is still being released. Decline rather than
         // answer into a half-torn-down audio graph.
         sipRef.current?.reject();
+        reportInboundCall("declined", info.from);
         return;
       }
       answeringRef.current = true;
@@ -480,12 +505,16 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
           const sip = sipRef.current;
           if (!sip) throw new Error("The bridge went offline before the call could be answered.");
           sip.answer(outbound);
+          // After answering, never before: a caller waiting on this round
+          // trip is a worse outcome than a call missing from a report.
+          reportInboundCall("answered", info.from);
         } catch (cause) {
           setNotice(
             `${describe(cause, "Could not reach the voice gateway.")} The call was not answered.`,
           );
           await teardownCall();
           sipRef.current?.reject();
+          reportInboundCall("declined", info.from);
           // `reject()` makes JsSIP emit `failed`, which runs the normal ended
           // path; this dispatch is the safety net for a session that had
           // already gone away.
