@@ -84,10 +84,13 @@ together and torn down together.
 
 ```
 app/
-  page.tsx                          console entry
+  page.tsx                          redirects to /agent/conversation
   layout.tsx                        fonts
   globals.css                       design tokens, keyframes
-  configure/page.tsx                agent configuration editor
+  (console)/                          sidebar shell, config state, preview panel
+    agent/{conversation,actions,advanced}/  the three agent screens
+    models-voice/                     model, voice, language, turn taking
+    upload/                           the non-real-time Upload Audio path
   api/upload/route.ts               Upload Audio mode (batch, not real-time)
   api/agent-config/route.ts         GET/PUT the agent configuration
   api/agent-config/secrets/route.ts write-only secret values
@@ -96,8 +99,10 @@ components/
   ui/                               shadcn-style primitives (button, tabs,
                                      field, input, textarea, select, switch,
                                      checkbox, dropdown)
+  shell/                              Sidebar, ConsoleChrome, DirtyNavGuard
+  preview/                            PreviewPanel, PreviewSession
   agent-config/
-    AgentConfigForm.tsx             tabbed form shell, save/load wiring
+    AgentConfigProvider.tsx         config state, save/discard, error routing
     ConversationTab.tsx             prompt, welcome message, conversation type
     ModelsVoiceTab.tsx              model, voice, language, VAD sensitivity
     ActionsTab.tsx                  empty state (tool calling not wired up)
@@ -105,7 +110,6 @@ components/
     VariableInsertMenu.tsx          `{variable}` insertion helper
     PromptPreview.tsx               resolved-prompt preview
   voice/
-    VoiceAgent.tsx                  composes the console
     VoiceOrb.tsx                    animated state orb, driven by real levels
     VoiceWaveform.tsx               canvas waveform, driven by real levels
     VoiceControls.tsx               start / mute / end
@@ -130,6 +134,8 @@ lib/
     defaults.ts                     seed configuration
     template.ts                     `{variable}` interpolation
     resolve.ts                      config + variables → resolved prompt
+    routes.ts                       navigation map, error → screen routing
+    preview-hints.ts                save-before-test and stale-settings rules
   utils.ts
 
 server/
@@ -151,12 +157,19 @@ protocol cannot drift between them.
 
 ## Configuring the agent
 
-Open `/configure` in the running app. The editor covers the prompt, the welcome
-message, model and voice settings, custom `{variables}`, and secrets.
+Open the app and use the sidebar. **Agent** holds Conversation, Actions and
+Advanced; **Models & Voice** and **Upload Audio** sit alongside it.
 
 Configuration is saved to `data/agent-config.json` and read fresh at the start of
 every call, so a change takes effect on the next call with no restart. A call
-already in progress keeps the settings it started with.
+already in progress keeps the settings it started with — the preview panel says
+so when you save mid-call.
+
+**Test agent** in the sidebar opens a preview panel where you can talk to the
+agent from any screen. A call keeps running while you navigate, and while the
+panel is closed; ending it is always explicit. If you start a test with unsaved
+edits, the panel asks whether to save first, because the call would otherwise
+use the last saved settings.
 
 Secret *values* are written to `data/agent-secrets.json` (gitignored, mode 0600)
 and are never sent to the browser.
