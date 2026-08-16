@@ -2,16 +2,21 @@
  * POST /api/telephony/report — tells Selorax whether an inbound call was
  * answered or declined, for its own call correlation.
  *
- * Always responds 202, even when the upstream report fails: correlation
- * bookkeeping must never fail or delay a live call. A caller waiting on this
- * HTTP round trip is a worse outcome than a call missing from a report, so
- * failures are logged server-side instead of surfaced to the response.
+ * Always responds 202 immediately, without waiting on the upstream report:
+ * correlation bookkeeping must never fail *or delay* a live call. This route
+ * is called at the instant the bridge answers a ringing phone, and
+ * `createCallingClient`'s requests carry a 10-second timeout — awaiting the
+ * report before responding could hold that response open for up to 10
+ * seconds whenever Selorax is slow or unreachable. See `dispatchReport` in
+ * `server/selorax/report.ts` for how the report is fired without being
+ * awaited, and why that is safe on this route's `runtime = "nodejs"`.
  */
 
 import { NextResponse } from "next/server";
 
 import { seloraxStore } from "@/server/config/selorax-store";
 import { createCallingClient } from "@/server/selorax/calling-client";
+import { dispatchReport } from "@/server/selorax/report";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,16 +39,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     return badRequest("callerPhone", "Required.");
   }
 
-  try {
-    const client = createCallingClient(await seloraxStore.read());
-    if (event === "answered") {
-      await client.reportAnswered(callerPhone);
-    } else {
-      await client.reportDeclined(callerPhone);
-    }
-  } catch (cause) {
+  const client = createCallingClient(await seloraxStore.read());
+  dispatchReport(client, event, callerPhone, (cause) => {
     console.error(`[selorax] report(${event}) failed:`, cause);
-  }
+  });
 
   return NextResponse.json({}, { status: 202 });
 }
