@@ -46,9 +46,17 @@ export function PreviewPanel({
     onStart();
   };
 
+  // Every dismissal clears the choice too — otherwise closing the panel mid-
+  // choice leaves `choosing` true, and reopening shows the unsaved-edits box
+  // again unprompted by any Start click.
+  const dismiss = () => {
+    setChoosing(false);
+    onClose();
+  };
+
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-black/20" onClick={onClose} aria-hidden />
+      <div className="fixed inset-0 z-40 bg-black/20" onClick={dismiss} aria-hidden />
       <aside
         role="dialog"
         aria-label="Test agent"
@@ -56,7 +64,7 @@ export function PreviewPanel({
       >
         <header className="flex items-center gap-2 border-b border-[var(--border)] px-4 py-3">
           <span className="truncate text-sm font-semibold text-[var(--text)]">{agentName}</span>
-          <Button variant="ghost" size="icon" aria-label="Close preview" className="ml-auto" onClick={onClose}>
+          <Button variant="ghost" size="icon" aria-label="Close preview" className="ml-auto" onClick={dismiss}>
             <X />
           </Button>
         </header>

@@ -26,8 +26,8 @@ export interface AgentConfigContextValue extends TabProps {
   dirty: boolean;
   formError: string | null;
   saveState: SaveState;
-  /** Resolves true when the configuration was persisted. */
-  save: () => Promise<boolean>;
+  /** Resolves the persisted configuration, or null when the save failed. */
+  save: () => Promise<AgentConfig | null>;
   discard: () => void;
 }
 
@@ -104,7 +104,7 @@ export function AgentConfigProvider({
     setSaveState("idle");
   }, [saved]);
 
-  const save = useCallback(async (): Promise<boolean> => {
+  const save = useCallback(async (): Promise<AgentConfig | null> => {
     setSaveState("saving");
     setErrors(new Map());
     setFormError(null);
@@ -119,7 +119,7 @@ export function AgentConfigProvider({
     } catch {
       setSaveState("idle");
       setFormError("Could not reach the server. Check that it is running and try again.");
-      return false;
+      return null;
     }
 
     if (!response.ok) {
@@ -131,7 +131,7 @@ export function AgentConfigProvider({
       const route = firstField ? routeForPath(firstField.path) : null;
       if (route) router.push(route);
       setSaveState("idle");
-      return false;
+      return null;
     }
 
     let next: AgentConfig;
@@ -142,13 +142,13 @@ export function AgentConfigProvider({
       setFormError(
         "The server sent a response we could not read. Your changes are still here — try saving again.",
       );
-      return false;
+      return null;
     }
 
     setSaved(next);
     setConfig(next);
     setSaveState("saved");
-    return true;
+    return next;
   }, [config, router]);
 
   const value: AgentConfigContextValue = {

@@ -37,12 +37,12 @@ export function ConsoleChrome({ children }: { children: React.ReactNode }) {
   }, [config.updatedAt, voice]);
 
   const saveAndStartCall = useCallback(async () => {
-    const ok = await save();
-    if (!ok) return; // The provider has already routed to the failing field.
-    setCallStartedWith(config.updatedAt);
+    const persisted = await save();
+    if (!persisted) return; // The provider has already routed to the failing field.
+    setCallStartedWith(persisted.updatedAt);
     setCallSeconds(0);
     await voice.start();
-  }, [save, config.updatedAt, voice]);
+  }, [save, voice]);
 
   const callActive = voice.status !== "idle" && voice.status !== "error";
   // Both of these only matter while a call is active; once the call ends they

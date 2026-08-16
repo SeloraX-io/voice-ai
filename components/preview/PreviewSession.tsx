@@ -23,6 +23,12 @@ const HEADLINE: Record<VoiceStatus, string> = {
   error: "Something went wrong",
 };
 
+/**
+ * The body of the preview panel: orb, waveform, controls, transcript, and a
+ * collapsible developer detail section. Purely presentational — it composes
+ * the existing voice components around a `VoiceSessionController` it is
+ * handed, rather than owning any call state itself.
+ */
 export function PreviewSession({
   voice,
   onStart,
