@@ -98,14 +98,19 @@ app/
 components/
   ui/                               shadcn-style primitives (button, tabs,
                                      field, input, textarea, select, switch,
-                                     checkbox, dropdown)
+                                     checkbox, dropdown, modal)
   shell/                              Sidebar, ConsoleChrome, DirtyNavGuard
   preview/                            PreviewPanel, PreviewSession
   agent-config/
     AgentConfigProvider.tsx         config state, save/discard, error routing
     ConversationTab.tsx             prompt, welcome message, conversation type
     ModelsVoiceTab.tsx              model, voice, language, VAD sensitivity
-    ActionsTab.tsx                  empty state (tool calling not wired up)
+    ActionsTab.tsx                  HTTP tools, client tools, webhooks (not called yet)
+    HttpToolModal.tsx               add or edit an HTTP tool
+    ClientToolModal.tsx             add or edit a client tool
+    WebhookModal.tsx                add or edit a webhook
+    ParameterRows.tsx               shared parameter editor
+    HeaderRows.tsx                  shared header / query editor
     AdvancedTab.tsx                 custom variables, secrets
     VariableInsertMenu.tsx          `{variable}` insertion helper
     PromptPreview.tsx               resolved-prompt preview
@@ -131,6 +136,8 @@ lib/
   gemini/types.ts                   model ids, voice, status + metric types
   agent-config/
     schema.ts                       the config contract + validateAgentConfig
+    tools.ts                        tool + webhook types and validation
+    validate-helpers.ts             shared field readers for both validators
     defaults.ts                     seed configuration
     template.ts                     `{variable}` interpolation
     resolve.ts                      config + variables → resolved prompt
@@ -173,6 +180,23 @@ use the last saved settings.
 
 Secret *values* are written to `data/agent-secrets.json` (gitignored, mode 0600)
 and are never sent to the browser.
+
+---
+
+### Actions
+
+**Actions** in the sidebar defines what the agent can do beyond talking:
+
+- **HTTP tools** — an endpoint the agent calls mid-conversation. Headers can
+  reference a secret as `{{SECRET_NAME}}`; the value is resolved on the server
+  and never sent to the browser. Braces in the URL (`/orders/{order_id}`)
+  become parameters the agent fills in.
+- **Client tools** — functions that run in the caller's own browser.
+- **Webhooks** — call events posted to an endpoint you control.
+
+Definitions are saved with the rest of the configuration, in
+`data/agent-config.json`. **The agent does not call them yet** — executing them
+during a call is the next piece of work.
 
 ---
 
