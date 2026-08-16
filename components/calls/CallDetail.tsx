@@ -10,6 +10,7 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 
+import { readCallChannel } from "@/lib/call-logs/channel";
 import { formatBdt, formatUsd } from "@/lib/call-logs/pricing";
 import type { CallEvent, CallRecord } from "@/lib/call-logs/types";
 
@@ -42,6 +43,7 @@ export function CallDetail({ call }: { call: CallRecord }) {
   // The summary is billed on top of the call, so the two are shown separately
   // and then added, rather than presenting one blended number.
   const totalUsd = call.cost.totalUsd + (call.summary?.usd ?? 0);
+  const channel = readCallChannel(call.channel);
 
   return (
     <div className="flex flex-col gap-7">
@@ -54,13 +56,23 @@ export function CallDetail({ call }: { call: CallRecord }) {
           All calls
         </Link>
 
-        <h1 className="mt-3 text-lg font-semibold tracking-tight text-[var(--text)]">
+        <h1 className="mt-3 flex items-center gap-2 text-lg font-semibold tracking-tight text-[var(--text)]">
           {new Date(call.startedAt).toLocaleString()}
+          <span
+            className={`rounded-full border px-1.5 py-0.5 text-[10px] font-medium leading-none ${
+              channel === "phone"
+                ? "border-[var(--accent)] text-[var(--accent)]"
+                : "border-[var(--border)] text-[var(--text-dim)]"
+            }`}
+          >
+            {channel === "phone" ? "Phone" : "Preview"}
+          </span>
         </h1>
         <p className="mt-1 text-sm text-[var(--text-muted)]">
           {stamp(call.durationMs)} · {call.turns} turn{call.turns === 1 ? "" : "s"} ·{" "}
           {ENDED_LABEL[call.endedBy]}
           {call.endReason ? ` — “${call.endReason}”` : ""}
+          {call.phone ? ` · from ${call.phone.from}` : ""}
         </p>
       </div>
 

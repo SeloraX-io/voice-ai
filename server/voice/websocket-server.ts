@@ -12,6 +12,7 @@ import type { IncomingMessage } from "node:http";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 
 import { base64ToPcm16, pcm16Rms } from "../../lib/audio/pcm";
+import { readCallChannel, type CallChannel } from "../../lib/call-logs/channel";
 import { computeCost, ratesFor, usageFromReport } from "../../lib/call-logs/pricing";
 import {
   EMPTY_USAGE,
@@ -54,6 +55,16 @@ const GREETING_GUARD_MS = 30_000;
  * leaves dead air, and two seconds is the compromise.
  */
 const HANGUP_GRACE_MS = 2_000;
+
+/**
+ * Ceiling on `from`/`to` as carried in the connection query string.
+ *
+ * These arrive as untrusted network input — the softphone bridge sends real
+ * numbers, but nothing stops another client from sending anything. This is
+ * generous for a phone number while keeping a hostile value from bloating the
+ * call record.
+ */
+const MAX_PHONE_FIELD_CHARS = 64;
 
 export interface VoiceGatewayOptions {
   port: number;
@@ -111,6 +122,36 @@ interface CallState {
   summaryConfig: SummaryConfig | null;
   /** Carried here so `closeCall` can report a failed write without a new parameter. */
   readonly log: NonNullable<VoiceGatewayOptions["log"]>;
+
+  /**
+   * Which surface opened this connection, and the numbers involved.
+   *
+   * Read once from the upgrade request's query string in `handleConnection`
+   * and never touched again — the preview player sends neither parameter, so
+   * these default to a browser call with no numbers.
+   */
+  readonly channel: CallChannel;
+  readonly phone: { from: string; to: string } | null;
+}
+
+/**
+ * Reads `channel`, `from` and `to` off the upgrade request.
+ *
+ * `request.url` is only ever the path and query string here (the server
+ * never sees a full URL), so a fixed placeholder base is enough to parse it
+ * with `URL`. Untrusted network input: `channel` falls back to `"browser"`
+ * through `readCallChannel`, and `from`/`to` are bounded and only kept as a
+ * pair — a call with one but not the other is treated as having neither.
+ */
+function parseCallOrigin(request: IncomingMessage): { channel: CallChannel; phone: CallState["phone"] } {
+  const url = new URL(request.url ?? "", "http://voice-gateway.invalid");
+  const channel = readCallChannel(url.searchParams.get("channel"));
+
+  const from = url.searchParams.get("from")?.slice(0, MAX_PHONE_FIELD_CHARS) ?? null;
+  const to = url.searchParams.get("to")?.slice(0, MAX_PHONE_FIELD_CHARS) ?? null;
+  const phone = from !== null && to !== null ? { from, to } : null;
+
+  return { channel, phone };
 }
 
 /** Milliseconds since the call began, for placing a line or event in time. */
@@ -189,6 +230,7 @@ async function handleConnection(
   request: IncomingMessage,
   log: NonNullable<VoiceGatewayOptions["log"]>,
 ): Promise<void> {
+  const { channel, phone } = parseCallOrigin(request);
   const state: CallState = {
     id: randomUUID(),
     gemini: null,
@@ -217,6 +259,8 @@ async function handleConnection(
     events: [],
     summaryConfig: null,
     log,
+    channel,
+    phone,
   };
   callStates.set(socket, state);
 
@@ -532,6 +576,8 @@ function recordCall(state: CallState, endedBy: CallRecord["endedBy"]): void {
     transcript: state.transcript,
     events: [...state.events, { atMs: endedAt - state.startedAt, kind: "ended" as const, detail: endedBy }],
     summary: null,
+    channel: state.channel,
+    phone: state.phone,
   };
 
   // Written first, then updated with the summary. The cost and transcript are

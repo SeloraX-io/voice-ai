@@ -65,6 +65,22 @@ function describe(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message.length > 0 ? cause.message : fallback;
 }
 
+/**
+ * The gateway URL for a phone call, tagged so the resulting call record is
+ * told apart from a browser preview.
+ *
+ * `from`/`to` are whatever the SIP INVITE carried — possibly absent, never
+ * validated here. The gateway treats them as opaque, length-bounded strings,
+ * so nothing beyond `URLSearchParams`'s own encoding happens to them.
+ */
+function phoneGatewayUrl(from: string | null, to: string | null): string {
+  const url = new URL(resolveGatewayUrl());
+  url.searchParams.set("channel", "phone");
+  if (from !== null) url.searchParams.set("from", from);
+  if (to !== null) url.searchParams.set("to", to);
+  return url.toString();
+}
+
 export function useSoftphoneBridge(): SoftphoneBridgeController {
   const [state, dispatch] = useReducer(bridgeReducer, INITIAL_BRIDGE_STATE);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
@@ -366,7 +382,10 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
           const outbound = player.outputStream;
           if (!outbound) throw new Error("The audio player produced no outgoing stream.");
 
-          const client: VoiceClient = new VoiceClient(resolveGatewayUrl(), {
+          // `info.from`/`info.to` are exactly what was just dispatched onto
+          // `BridgeState.from`/`.to` above — read from here rather than the
+          // reducer's state, which this closure would otherwise see stale.
+          const client: VoiceClient = new VoiceClient(phoneGatewayUrl(info.from, info.to), {
             onMessage: handleServerMessage,
             // Names the socket whose close this is. Safe despite `client` not
             // being assigned yet: the handler only ever runs after connect().

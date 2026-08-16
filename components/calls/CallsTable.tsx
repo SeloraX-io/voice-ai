@@ -12,6 +12,7 @@
 
 import Link from "next/link";
 
+import { readCallChannel } from "@/lib/call-logs/channel";
 import { BDT_PER_USD, formatBdt, formatUsd } from "@/lib/call-logs/pricing";
 import type { CallRecord } from "@/lib/call-logs/types";
 
@@ -93,6 +94,7 @@ export function CallsTable({ calls }: { calls: CallRecord[] }) {
                 {calls.map((call) => {
                   const ended = ENDED[call.endedBy];
                   const callTotal = call.cost.totalUsd + (call.summary?.usd ?? 0);
+                  const channel = readCallChannel(call.channel);
 
                   return (
                     <tr
@@ -106,8 +108,11 @@ export function CallsTable({ calls }: { calls: CallRecord[] }) {
                           href={`/calls/${call.id}`}
                           className="block whitespace-nowrap underline-offset-2 hover:underline"
                         >
-                          <span className="block font-medium text-[var(--text)]">
-                            {formatDay(call.startedAt)}
+                          <span className="flex items-center gap-1.5">
+                            <span className="font-medium text-[var(--text)]">
+                              {formatDay(call.startedAt)}
+                            </span>
+                            <ChannelTag channel={channel} />
                           </span>
                           <span className="block text-xs text-[var(--text-dim)]">
                             {formatTime(call.startedAt)}
@@ -192,6 +197,26 @@ function Stat({
       </p>
       {sub && <p className="font-mono text-xs tabular-nums text-[var(--text-dim)]">{sub}</p>}
     </div>
+  );
+}
+
+/**
+ * A small tag by the date, not a column — the table is deliberately narrow
+ * enough to fit without scrolling, and a call's channel is a detail, not
+ * something worth scanning down its own column.
+ */
+function ChannelTag({ channel }: { channel: ReturnType<typeof readCallChannel> }) {
+  const isPhone = channel === "phone";
+  return (
+    <span
+      className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium leading-none ${
+        isPhone
+          ? "border-[var(--accent)] text-[var(--accent)]"
+          : "border-[var(--border)] text-[var(--text-dim)]"
+      }`}
+    >
+      {isPhone ? "Phone" : "Preview"}
+    </span>
   );
 }
 

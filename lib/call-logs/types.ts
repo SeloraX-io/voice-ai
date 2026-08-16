@@ -5,6 +5,8 @@
  * displays it, so neither side can drift from the other's idea of a record.
  */
 
+import type { CallChannel } from "./channel";
+
 /** Token counts as Gemini reports them, split by direction and modality. */
 export interface CallUsage {
   inputTextTokens: number;
@@ -102,6 +104,14 @@ export interface CallRecord {
   events?: CallEvent[];
   /** Null when summarising is off, or when it failed. */
   summary?: CallSummary | null;
+  /**
+   * Which surface answered the call. Absent on every record written before
+   * this field existed — read it through `readCallChannel`, never directly,
+   * so an old or unrecognised value still reads as `"browser"`.
+   */
+  channel?: CallChannel;
+  /** The numbers involved, when the call came in over the phone bridge. */
+  phone?: { from: string; to: string } | null;
 }
 
 /**
