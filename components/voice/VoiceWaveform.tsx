@@ -97,13 +97,13 @@ export function VoiceWaveform({ status, levels, bars = 72, className }: VoiceWav
         const age = 0.25 + (i / bars) * 0.75;
 
         if (idle) {
-          context.fillStyle = `rgba(140,140,170,${0.18 * age})`;
+          context.fillStyle = `rgba(75,79,105,${0.65 * age})`;
         } else if (source[i] === 2) {
-          context.fillStyle = `rgba(34,211,238,${0.35 + amplitude * 0.65 * age})`;
+          context.fillStyle = `rgba(8,145,178,${0.5 + amplitude * 0.5 * age})`;
         } else if (source[i] === 1) {
-          context.fillStyle = `rgba(124,92,255,${0.35 + amplitude * 0.65 * age})`;
+          context.fillStyle = `rgba(109,69,255,${0.5 + amplitude * 0.5 * age})`;
         } else {
-          context.fillStyle = `rgba(140,140,170,${0.22 * age})`;
+          context.fillStyle = `rgba(75,79,105,${0.7 * age})`;
         }
 
         const radius = Math.min(barWidth / 2, height / 2);

@@ -18,27 +18,9 @@ export const metadata: Metadata = {
     "Streaming voice conversations with Gemini Live: continuous microphone capture, sub-second time-to-first-audio and natural interruption.",
 };
 
-/** Applied before paint so the chosen theme never flashes. */
-const THEME_BOOTSTRAP = `
-try {
-  var stored = localStorage.getItem("voice-agent-theme");
-  document.documentElement.dataset.theme = stored === "light" ? "light" : "dark";
-} catch (_) {
-  document.documentElement.dataset.theme = "dark";
-}
-`;
-
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html
-      lang="en"
-      data-theme="dark"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-      suppressHydrationWarning
-    >
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
-      </head>
+    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="flex min-h-full flex-col">{children}</body>
     </html>
   );

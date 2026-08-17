@@ -8,6 +8,7 @@
  *   npm run dev:gateway    # ws://localhost:4000/voice
  */
 
+import { apiKeyRequired } from "./voice/upgrade-auth";
 import { startVoiceGateway } from "./voice/websocket-server";
 
 const PORT = Number.parseInt(process.env.VOICE_GATEWAY_PORT ?? "4000", 10);
@@ -28,7 +29,17 @@ if (!process.env.GEMINI_API_KEY) {
 
 const server = startVoiceGateway({ port: PORT, path: PATH, log });
 
-server.on("listening", () => log(`listening on ws://localhost:${PORT}${PATH}`));
+server.on("listening", () => {
+  log(`listening on ws://localhost:${PORT}${PATH}`);
+  // Said out loud on every start: an open gateway spends the owner's money for
+  // whoever finds it, and that is too easy to leave switched off by accident.
+  log(
+    apiKeyRequired()
+      ? "an API key is required to connect"
+      : "no API key required — anyone who can reach this port can open a billed session " +
+          "(set VOICE_GATEWAY_REQUIRE_KEY=1 to demand one)",
+  );
+});
 server.on("error", (error) => {
   console.error("[voice-gateway] failed to start:", error.message);
   process.exit(1);

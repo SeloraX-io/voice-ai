@@ -12,6 +12,7 @@ import {
   type TranscriptEntry,
   type VoiceStatus,
 } from "@/lib/gemini/types";
+import type { CallUsage, ToolActivity } from "@/lib/call-logs/types";
 import type { ServerMessage, SessionInfo, Speaker } from "@/types/voice";
 
 /** How long the INTERRUPTED visual state is held before returning to LISTENING. */
@@ -36,6 +37,12 @@ export interface VoiceSessionController {
   session: SessionInfo | null;
   transcript: TranscriptEntry[];
   metrics: CallMetrics;
+  /** Token usage so far this call; null until the gateway reports any. */
+  usage: CallUsage | null;
+  /** Estimated spend so far in USD; null while usage is unknown. */
+  costUsd: number | null;
+  /** Tools this call has invoked, oldest first. */
+  toolActivity: ToolActivity[];
   muted: boolean;
   /** Mutated at audio rate; read it from rAF so React never re-renders on it. */
   levels: React.RefObject<VoiceLevels>;
@@ -71,6 +78,12 @@ export function useVoiceSession(): VoiceSessionController {
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [metrics, setMetrics] = useState<CallMetrics>(EMPTY_METRICS);
+  /** Running token usage and cost for this call, as the gateway reports it. */
+  const [usage, setUsage] = useState<CallUsage | null>(null);
+  const [costUsd, setCostUsd] = useState<number | null>(null);
+  const [toolActivity, setToolActivity] = useState<ToolActivity[]>([]);
+  /** The last measured time-to-first-audio, sent to the gateway on hang-up. */
+  const ttfaRef = useRef<number | null>(null);
   const [muted, setMuted] = useState(false);
 
   const levels = useRef<VoiceLevels>({ user: 0, agent: 0 });
@@ -156,7 +169,7 @@ export function useVoiceSession(): VoiceSessionController {
   const teardown = useCallback(async () => {
     clearTimers();
 
-    clientRef.current?.close();
+    clientRef.current?.close(ttfaRef.current);
     clientRef.current = null;
 
     const mic = micRef.current;
@@ -308,6 +321,34 @@ export function useVoiceSession(): VoiceSessionController {
           return;
         }
 
+        case "tool_call":
+          setToolActivity((current) => [
+            ...current,
+            {
+              id: message.id,
+              name: message.name,
+              silent: message.silent,
+              status: "running",
+              durationMs: null,
+            },
+          ]);
+          return;
+
+        case "tool_result":
+          setToolActivity((current) =>
+            current.map((entry) =>
+              entry.id === message.id
+                ? { ...entry, status: message.ok ? "ok" : "failed", durationMs: message.durationMs }
+                : entry,
+            ),
+          );
+          return;
+
+        case "usage_update":
+          setUsage(message.usage);
+          setCostUsd(message.costUsd);
+          return;
+
         case "pong":
           patchMetrics({ roundTripMs: now - message.t });
           return;
@@ -337,6 +378,10 @@ export function useVoiceSession(): VoiceSessionController {
     setError(null);
     setStatus("connecting");
     setMetrics({ ...EMPTY_METRICS });
+    setUsage(null);
+    setCostUsd(null);
+    setToolActivity([]);
+    ttfaRef.current = null;
     turnRef.current = { ...EMPTY_TURN };
     openEntriesRef.current = { user: null, assistant: null };
 
@@ -356,7 +401,13 @@ export function useVoiceSession(): VoiceSessionController {
           const turn = turnRef.current;
           if (turn.measured || turn.speechEndedAt === null) return;
           turn.measured = true;
-          patchMetrics({ timeToFirstAudioMs: performance.now() - turn.speechEndedAt });
+          {
+            const ttfa = performance.now() - turn.speechEndedAt;
+            // Mirrored into a ref so teardown can send it on hang-up without
+            // taking a dependency on state that would be stale in a callback.
+            ttfaRef.current = ttfa;
+            patchMetrics({ timeToFirstAudioMs: ttfa });
+          }
         },
       });
       await player.start();
@@ -430,13 +481,14 @@ export function useVoiceSession(): VoiceSessionController {
   const clearTranscript = useCallback(() => {
     openEntriesRef.current = { user: null, assistant: null };
     setTranscript([]);
+    setToolActivity([]);
   }, []);
 
   // Release the microphone and both AudioContexts if the page unmounts mid-call.
   useEffect(() => {
     return () => {
       clearTimers();
-      clientRef.current?.close();
+      clientRef.current?.close(ttfaRef.current);
       clientRef.current = null;
       void micRef.current?.stop();
       micRef.current = null;
@@ -451,6 +503,9 @@ export function useVoiceSession(): VoiceSessionController {
     session,
     transcript,
     metrics,
+    usage,
+    costUsd,
+    toolActivity,
     muted,
     levels,
     start,

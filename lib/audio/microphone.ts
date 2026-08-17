@@ -4,16 +4,16 @@
  * Microphone -> MediaStreamSource -> AudioWorklet -> Int16 PCM chunks.
  * Chunks are emitted every ~30 ms and handed straight to the WebSocket; nothing
  * is accumulated here.
+ *
+ * The PCM pipeline itself lives in AudioCapture (lib/audio/audio-capture.ts)
+ * so it can also be driven by a remote WebRTC track for phone calls.
+ * MicrophoneCapture's job is narrower: acquire the mic via getUserMedia, map
+ * its errors, and release the tracks it acquired — releasing the microphone
+ * is this class's responsibility alone, since AudioCapture never owns the
+ * tracks it's handed.
  */
 
-import {
-  createAudioContext,
-  loadRecorderWorklet,
-  RECORDER_PROCESSOR_NAME,
-  type RecorderChunkMessage,
-  type RecorderProcessorOptions,
-} from "./audio-worklet";
-import { INPUT_SAMPLE_RATE, MIC_CHUNK_MS } from "@/types/voice";
+import { AudioCapture, type AudioCaptureHandlers } from "./audio-capture";
 
 export type MicrophoneErrorKind =
   | "permission_denied"
@@ -74,18 +74,21 @@ export interface MicrophoneCaptureHandlers {
 }
 
 export class MicrophoneCapture {
+  private readonly capture: AudioCapture;
   private stream: MediaStream | null = null;
-  private context: AudioContext | null = null;
-  private source: MediaStreamAudioSourceNode | null = null;
-  private worklet: AudioWorkletNode | null = null;
-  private sink: GainNode | null = null;
   private muted = false;
-  private running = false;
 
-  constructor(private readonly handlers: MicrophoneCaptureHandlers) {}
+  constructor(private readonly handlers: MicrophoneCaptureHandlers) {
+    const captureHandlers: AudioCaptureHandlers = {
+      onChunk: (pcm) => this.handlers.onChunk(pcm),
+      onLevel: (level) => this.handlers.onLevel(level),
+      onError: (error) => this.handlers.onError(toMicrophoneError(error)),
+    };
+    this.capture = new AudioCapture(captureHandlers);
+  }
 
   get isRunning(): boolean {
-    return this.running;
+    return this.capture.isRunning;
   }
 
   get isMuted(): boolean {
@@ -94,11 +97,11 @@ export class MicrophoneCapture {
 
   /** Effective capture rate — 16 kHz unless the browser forced another rate. */
   get sampleRate(): number {
-    return this.context?.sampleRate ?? INPUT_SAMPLE_RATE;
+    return this.capture.sampleRate;
   }
 
   async start(): Promise<void> {
-    if (this.running) return;
+    if (this.capture.isRunning) return;
 
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
@@ -120,49 +123,7 @@ export class MicrophoneCapture {
         video: false,
       });
 
-      this.context = createAudioContext(INPUT_SAMPLE_RATE);
-      if (this.context.state === "suspended") await this.context.resume();
-      await loadRecorderWorklet(this.context);
-
-      const processorOptions: RecorderProcessorOptions = {
-        targetSampleRate: INPUT_SAMPLE_RATE,
-        chunkMs: MIC_CHUNK_MS,
-      };
-
-      this.worklet = new AudioWorkletNode(this.context, RECORDER_PROCESSOR_NAME, {
-        numberOfInputs: 1,
-        numberOfOutputs: 1,
-        outputChannelCount: [1],
-        processorOptions,
-      });
-
-      this.worklet.port.onmessage = (event: MessageEvent<RecorderChunkMessage>) => {
-        const { pcm, rms } = event.data;
-        if (this.muted) {
-          this.handlers.onLevel(0);
-          return;
-        }
-        this.handlers.onLevel(rms);
-        this.handlers.onChunk(new Int16Array(pcm));
-      };
-
-      this.worklet.onprocessorerror = () => {
-        this.handlers.onError(
-          new MicrophoneError("unknown", "The audio capture worklet stopped unexpectedly."),
-        );
-      };
-
-      this.source = this.context.createMediaStreamSource(this.stream);
-      // Silent sink: keeps the worklet inside the rendering graph without
-      // routing the microphone back to the speakers.
-      this.sink = this.context.createGain();
-      this.sink.gain.value = 0;
-
-      this.source.connect(this.worklet);
-      this.worklet.connect(this.sink);
-      this.sink.connect(this.context.destination);
-
-      this.running = true;
+      await this.capture.start(this.stream);
     } catch (cause) {
       await this.stop();
       throw toMicrophoneError(cause);
@@ -174,31 +135,17 @@ export class MicrophoneCapture {
     for (const track of this.stream?.getAudioTracks() ?? []) {
       track.enabled = !muted;
     }
-    if (muted) this.handlers.onLevel(0);
+    this.capture.setMuted(muted);
   }
 
   async stop(): Promise<void> {
-    this.running = false;
+    await this.capture.stop();
 
-    if (this.worklet) {
-      this.worklet.port.onmessage = null;
-      this.worklet.onprocessorerror = null;
-      this.worklet.port.postMessage({ type: "close" });
-      this.worklet.disconnect();
-      this.worklet = null;
-    }
-    this.source?.disconnect();
-    this.source = null;
-    this.sink?.disconnect();
-    this.sink = null;
-
+    // AudioCapture does not own these tracks — it never called getUserMedia,
+    // so releasing the microphone (and turning off the recording indicator)
+    // is done here alone.
     for (const track of this.stream?.getTracks() ?? []) track.stop();
     this.stream = null;
-
-    if (this.context && this.context.state !== "closed") {
-      await this.context.close().catch(() => undefined);
-    }
-    this.context = null;
     this.muted = false;
   }
 }

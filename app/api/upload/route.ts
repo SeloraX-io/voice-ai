@@ -14,12 +14,12 @@ import { GoogleGenAI, Type } from "@google/genai";
 
 import { pcm16ToWav, sampleRateFromMimeType } from "@/lib/audio/pcm";
 import {
-  AGENT_VOICE,
   UPLOAD_TTS_MODEL,
   UPLOAD_UNDERSTANDING_MODEL,
   type UploadAnalysis,
 } from "@/lib/gemini/types";
-import { CALL_CENTER_SYSTEM_INSTRUCTION } from "@/server/voice/agent-config";
+import { resolveAgentConfig } from "@/lib/agent-config/resolve";
+import { configStore } from "@/server/config/store";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -97,6 +97,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const ai = new GoogleGenAI({ apiKey });
   const startedAt = Date.now();
+  const agent = resolveAgentConfig(await configStore.read());
 
   try {
     const audioBase64 = Buffer.from(await file.arrayBuffer()).toString("base64");
@@ -113,13 +114,14 @@ export async function POST(request: Request): Promise<NextResponse> {
             {
               text:
                 "This is a recording of a customer calling support. " +
-                "Transcribe exactly what the customer says, then write the reply you would speak back to them.",
+                "Transcribe exactly what the customer says, in whatever language they used. " +
+                "Then write the reply you would speak back to them.",
             },
           ],
         },
       ],
       config: {
-        systemInstruction: CALL_CENTER_SYSTEM_INSTRUCTION,
+        systemInstruction: agent.instructions,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -154,7 +156,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       contents: parsed.reply,
       config: {
         responseModalities: ["AUDIO"],
-        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: AGENT_VOICE } } },
+        speechConfig: {
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: agent.models.voice } },
+          languageCode: agent.models.languageCode,
+        },
       },
     });
     const synthesisMs = Date.now() - synthesisStartedAt;

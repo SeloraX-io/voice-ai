@@ -125,13 +125,18 @@ export class VoiceClient {
     this.send({ type: "audio_stream_end" });
   }
 
-  close(): void {
+  /**
+   * `timeToFirstAudioMs` is measured here, in the browser — the gateway cannot
+   * see when audio actually reached the speakers — so the hang-up carries it
+   * along for the call log.
+   */
+  close(timeToFirstAudioMs: number | null = null): void {
     this.closing = true;
     this.stopPinging();
     const socket = this.socket;
     if (!socket) return;
     if (socket.readyState === WebSocket.OPEN) {
-      this.send({ type: "end" });
+      this.send({ type: "end", timeToFirstAudioMs });
       socket.close(1000, "client hangup");
     } else {
       socket.close();
@@ -162,11 +167,26 @@ export class VoiceClient {
 /**
  * Resolves the gateway URL. `NEXT_PUBLIC_VOICE_GATEWAY_URL` is a public
  * endpoint address, never a credential.
+ *
+ * When the gateway is running with `VOICE_GATEWAY_REQUIRE_KEY=1`, the console
+ * has to present a key too. It goes in the query string because the browser's
+ * `WebSocket` constructor cannot set an `Authorization` header, and it comes
+ * from `NEXT_PUBLIC_VOICE_GATEWAY_KEY`, which — being NEXT_PUBLIC — is baked
+ * into the bundle and readable by anyone who loads the console. Mint a key for
+ * the console alone, and revoke it on its own when the time comes.
  */
 export function resolveGatewayUrl(): string {
   const configured = process.env.NEXT_PUBLIC_VOICE_GATEWAY_URL;
-  if (configured) return configured;
-  if (typeof window === "undefined") return "ws://localhost:4000/voice";
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.hostname}:4000/voice`;
+  const base =
+    configured ||
+    (typeof window === "undefined"
+      ? "ws://localhost:4000/voice"
+      : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.hostname}:4000/voice`);
+
+  const key = process.env.NEXT_PUBLIC_VOICE_GATEWAY_KEY;
+  if (!key) return base;
+
+  const url = new URL(base);
+  url.searchParams.set("key", key);
+  return url.toString();
 }

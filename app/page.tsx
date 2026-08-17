@@ -1,9 +1,5 @@
-import { VoiceAgent } from "@/components/voice/VoiceAgent";
+import { redirect } from "next/navigation";
 
 export default function Home() {
-  return (
-    <main className="flex flex-1 flex-col">
-      <VoiceAgent />
-    </main>
-  );
+  redirect("/agent/conversation");
 }

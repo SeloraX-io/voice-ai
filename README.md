@@ -41,8 +41,10 @@ GEMINI_API_KEY=your-key-here
 
 **Never** rename it to `NEXT_PUBLIC_GEMINI_API_KEY`. Anything prefixed with
 `NEXT_PUBLIC_` is inlined into the JavaScript bundle and becomes public. The
-only public variable here is `NEXT_PUBLIC_VOICE_GATEWAY_URL`, which is an
-endpoint address, not a credential.
+public variables here are `NEXT_PUBLIC_VOICE_GATEWAY_URL`, an endpoint address
+rather than a credential, and `NEXT_PUBLIC_VOICE_GATEWAY_KEY` — a gateway API
+key that is public by necessity, because the console connects from the browser.
+See [Locking the gateway down](#locking-the-gateway-down).
 
 ### Scripts
 
@@ -84,16 +86,37 @@ together and torn down together.
 
 ```
 app/
-  page.tsx                          console entry
-  layout.tsx                        theme bootstrap, fonts
-  globals.css                       design tokens (dark + light), keyframes
+  page.tsx                          redirects to /agent/conversation
+  layout.tsx                        fonts
+  globals.css                       design tokens, keyframes
+  (console)/                          sidebar shell, config state, preview panel
+    agent/{conversation,actions,advanced}/  the three agent screens
+    models-voice/                     model, voice, language, turn taking
+    upload/                           the non-real-time Upload Audio path
   api/upload/route.ts               Upload Audio mode (batch, not real-time)
+  api/agent-config/route.ts         GET/PUT the agent configuration
+  api/agent-config/secrets/route.ts write-only secret values
 
 components/
-  ThemeToggle.tsx
-  ui/                               shadcn-style primitives (button, tabs)
+  ui/                               shadcn-style primitives (button, tabs,
+                                     field, input, textarea, select, switch,
+                                     checkbox, dropdown, modal)
+  shell/                              Sidebar, ConsoleChrome, DirtyNavGuard
+  preview/                            PreviewPanel, PreviewSession
+  agent-config/
+    AgentConfigProvider.tsx         config state, save/discard, error routing
+    ConversationTab.tsx             prompt, welcome message, conversation type
+    ModelsVoiceTab.tsx              model, voice, language, VAD sensitivity
+    ActionsTab.tsx                  HTTP tools, client tools, webhooks (not called yet)
+    HttpToolModal.tsx               add or edit an HTTP tool
+    ClientToolModal.tsx             add or edit a client tool
+    WebhookModal.tsx                add or edit a webhook
+    ParameterRows.tsx               shared parameter editor
+    HeaderRows.tsx                  shared header / query editor
+    AdvancedTab.tsx                 custom variables, secrets
+    VariableInsertMenu.tsx          `{variable}` insertion helper
+    PromptPreview.tsx               resolved-prompt preview
   voice/
-    VoiceAgent.tsx                  composes the console
     VoiceOrb.tsx                    animated state orb, driven by real levels
     VoiceWaveform.tsx               canvas waveform, driven by real levels
     VoiceControls.tsx               start / mute / end
@@ -113,14 +136,23 @@ lib/
     pcm.ts                          base64 / PCM16 / WAV (shared both sides)
   websocket/voice-client.ts         browser side of the protocol
   gemini/types.ts                   model ids, voice, status + metric types
+  agent-config/
+    schema.ts                       the config contract + validateAgentConfig
+    tools.ts                        tool + webhook types and validation
+    validate-helpers.ts             shared field readers for both validators
+    defaults.ts                     seed configuration
+    template.ts                     `{variable}` interpolation
+    resolve.ts                      config + variables → resolved prompt
+    routes.ts                       navigation map, error → screen routing
+    preview-hints.ts                save-before-test and stale-settings rules
   utils.ts
 
 server/
   index.ts                          gateway process entry
+  config/store.ts                   atomic config + secret persistence
   voice/
     websocket-server.ts             connection lifecycle, validation, routing
     gemini-session.ts               one Gemini Live session per call
-    agent-config.ts                 the call-centre system instruction
     vad.ts                          energy VAD (UI + barge-in hint only)
 
 public/audio-worklet/recorder-processor.js    capture + resample, audio thread
@@ -129,6 +161,44 @@ types/voice.ts                                the wire protocol, shared
 
 `types/voice.ts` is imported by both the browser and the gateway, so the
 protocol cannot drift between them.
+
+---
+
+## Configuring the agent
+
+Open the app and use the sidebar. **Agent** holds Conversation, Actions and
+Advanced; **Models & Voice** and **Upload Audio** sit alongside it.
+
+Configuration is saved to `data/agent-config.json` and read fresh at the start of
+every call, so a change takes effect on the next call with no restart. A call
+already in progress keeps the settings it started with — the preview panel says
+so when you save mid-call.
+
+**Test agent** in the sidebar opens a preview panel where you can talk to the
+agent from any screen. A call keeps running while you navigate, and while the
+panel is closed; ending it is always explicit. If you start a test with unsaved
+edits, the panel asks whether to save first, because the call would otherwise
+use the last saved settings.
+
+Secret *values* are written to `data/agent-secrets.json` (gitignored, mode 0600)
+and are never sent to the browser.
+
+---
+
+### Actions
+
+**Actions** in the sidebar defines what the agent can do beyond talking:
+
+- **HTTP tools** — an endpoint the agent calls mid-conversation. Headers can
+  reference a secret as `{{SECRET_NAME}}`; the value is resolved on the server
+  and never sent to the browser. Braces in the URL (`/orders/{order_id}`)
+  become parameters the agent fills in.
+- **Client tools** — functions that run in the caller's own browser.
+- **Webhooks** — call events posted to an endpoint you control.
+
+Definitions are saved with the rest of the configuration, in
+`data/agent-config.json`. **The agent does not call them yet** — executing them
+during a call is the next piece of work.
 
 ---
 
@@ -305,6 +375,71 @@ as the gateway's start command. Terminate TLS in front of it — browsers on an
 HTTPS page cannot open a plain `ws://` socket.
 
 Nothing is deployed by this repo.
+
+### Locking the gateway down
+
+A deployed gateway is reachable by anyone who finds the port, and every
+connection it accepts opens a Gemini session billed to you. Set
+`VOICE_GATEWAY_REQUIRE_KEY=1` on it and mint a key per client in the console, at
+**API Keys**.
+
+A client presents its key as `Authorization: Bearer <key>`, or — where headers
+cannot be set, which includes every browser `WebSocket` — as `?key=<key>` on the
+gateway URL. The check runs during the HTTP upgrade, so an unauthenticated
+client is refused with a `401` before any session is opened and before anything
+is billed. Only a SHA-256 hash is stored, in `data/api-keys.json`: a key is
+shown once, at mint, and a lost one is replaced rather than recovered. Revoking
+takes effect on the next connection; a call already in progress is left to
+finish. Last-used times are kept apart, in `data/api-keys-usage.json`, so that
+the gateway writing telemetry can never overwrite a revoke the console just
+made.
+
+The console itself is a browser client, so the preview player and the softphone
+bridge need a key too — `NEXT_PUBLIC_VOICE_GATEWAY_KEY`. Give it its own key so
+it can be revoked on its own.
+
+The switch defaults **off** so a fresh checkout runs with no setup; the gateway
+says which mode it is in on every start.
+
+#### What this does and does not protect
+
+This defends the gateway against **direct exposure of its own port**, which is
+what it was built for. It does not make the deployment safe on its own, because
+the console and `/api/api-keys` are themselves unauthenticated. Anyone who can
+reach the Next app on port 3000 can:
+
+- read `NEXT_PUBLIC_VOICE_GATEWAY_KEY` straight out of the JavaScript bundle —
+  `NEXT_PUBLIC_` variables are inlined at build time — and use it as a gateway
+  client;
+- mint keys of their own;
+- enumerate every key's name, fingerprint, creation date and last use;
+- **revoke every key**, which denies service to the softphone bridge and stops
+  the agent answering the phone.
+
+The Selorax bridge (see below) proxies a second, more powerful credential
+through the same unauthenticated surface. The proxy design itself is sound —
+the Selorax admin token never reaches the browser, so it cannot be exfiltrated
+and replayed elsewhere, which is exactly what it was built to prevent. But
+proxying a credential from an unauthenticated route grants its authority to
+anyone who can reach the proxy. Anyone who can reach port 3000 can also:
+
+- call `GET /api/telephony/line` to read the AI extension's SIP URI and
+  **plaintext password**, plus its TURN credentials — and re-claim the device
+  on every call, so hitting it repeatedly evicts the AI's own registration;
+- call `POST /api/telephony/report` to write arbitrary `caller_phone` values
+  into a production Selorax call log and its credit accounting;
+- call `PUT /api/selorax` with an all-blank body to wipe a 90-day token the
+  operator cannot re-obtain without an OTP login.
+
+So today the real trust boundary is "can reach port 3000", not "holds a key".
+Put the console behind authentication, or behind a network that only you can
+reach, before treating gateway keys as a security control.
+
+**Follow-up, when console auth lands:** `NEXT_PUBLIC_VOICE_GATEWAY_KEY` becomes
+a standing bypass of it — a long-lived gateway credential sitting in a public
+bundle, usable by anyone who ever loaded the page. Replace the browser key with
+a short-lived token issued to the signed-in user from an authenticated route,
+and drop the `NEXT_PUBLIC_` variable at the same time.
 
 ---
 
