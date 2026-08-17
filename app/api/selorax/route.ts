@@ -53,7 +53,7 @@ export async function PUT(request: Request): Promise<NextResponse> {
   try {
     return NextResponse.json(toSeloraxSummary(await seloraxStore.write(result.value)));
   } catch (cause) {
-    console.error("[selorax] write failed:", cause);
+    console.error("[selorax] write failed:", (cause as Error).name);
     return NextResponse.json(
       { errors: [{ path: "", message: "Could not save the configuration." }] },
       { status: 500 },

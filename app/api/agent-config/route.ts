@@ -37,7 +37,7 @@ export async function PUT(request: Request): Promise<NextResponse> {
     const secretKeys = await configStore.listSecretKeys();
     return NextResponse.json({ ...saved, secretKeys });
   } catch (cause) {
-    console.error("[agent-config] write failed:", cause);
+    console.error("[agent-config] write failed:", (cause as Error).name);
     return NextResponse.json(
       { errors: [{ path: "", message: "Could not save the configuration." }] },
       { status: 500 },

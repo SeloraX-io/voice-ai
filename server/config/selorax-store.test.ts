@@ -1,15 +1,12 @@
-import { test } from "node:test";
+import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 
 import { EMPTY_SELORAX_CONFIG } from "../../lib/selorax/config";
+import { freshDb, startTestMongo, stopTestMongo, unreachableDb } from "../db/test-db";
 import { createSeloraxStore } from "./selorax-store";
 
-async function freshDir(): Promise<string> {
-  return mkdtemp(path.join(tmpdir(), "selorax-"));
-}
+before(startTestMongo);
+after(stopTestMongo);
 
 const CONFIG = {
   baseUrl: "https://api.selorax.io",
@@ -18,43 +15,74 @@ const CONFIG = {
 };
 
 test("an unwritten store reads as empty config", async () => {
-  const store = createSeloraxStore(await freshDir());
+  const store = createSeloraxStore(await freshDb());
   assert.deepEqual(await store.read(), EMPTY_SELORAX_CONFIG);
 });
 
 test("writes and reads back", async () => {
-  const store = createSeloraxStore(await freshDir());
+  const store = createSeloraxStore(await freshDb());
   await store.write(CONFIG);
   assert.deepEqual(await store.read(), CONFIG);
 });
 
-test("a corrupt file reads as empty rather than throwing", async () => {
-  const dir = await freshDir();
-  await writeFile(path.join(dir, "selorax.json"), "{ not json", "utf8");
+test("a second write replaces the first", async () => {
+  const store = createSeloraxStore(await freshDb());
+  await store.write(CONFIG);
+  await store.write({ ...CONFIG, storeId: "99" });
+  assert.equal((await store.read()).storeId, "99");
+});
+
+test("a document that fails validation reads as empty rather than throwing", async () => {
+  const getDb = await freshDb();
+  const db = await getDb();
+  // baseUrl present but authToken and storeId missing: not the all-empty case,
+  // so the validator reports errors rather than returning EMPTY.
+  await db
+    .collection("selorax_config")
+    .insertOne({ _id: "singleton", value: { baseUrl: "https://x.test" } } as never);
 
   const messages: string[] = [];
-  const store = createSeloraxStore(dir, (message) => messages.push(message));
+  const store = createSeloraxStore(getDb, (message) => messages.push(message));
 
   assert.deepEqual(await store.read(), EMPTY_SELORAX_CONFIG);
   assert.equal(messages.length, 1);
 });
 
-test("never logs the contents of a corrupt file", async () => {
-  const dir = await freshDir();
-  // The sensitive value must LEAD the file: V8's JSON error message includes the
-  // first part. If buried later, the test silently passes even if implementation
-  // logs error.message instead of error.name.
-  await writeFile(path.join(dir, "selorax.json"), 'secret-token', "utf8");
+test("a bad document is left in place, not overwritten", async () => {
+  const getDb = await freshDb();
+  const db = await getDb();
+  await db
+    .collection("selorax_config")
+    .insertOne({ _id: "singleton", value: { baseUrl: "https://x.test" } } as never);
+
+  const store = createSeloraxStore(getDb, () => {});
+  await store.read();
+
+  const doc = await db.collection("selorax_config").findOne({ _id: "singleton" as never });
+  assert.equal((doc as unknown as { value: { baseUrl: string } }).value.baseUrl, "https://x.test");
+});
+
+test("never logs the contents of a bad document", async () => {
+  const getDb = await freshDb();
+  const db = await getDb();
+  await db
+    .collection("selorax_config")
+    .insertOne({ _id: "singleton", value: { baseUrl: "secret-token" } } as never);
 
   const messages: string[] = [];
-  const store = createSeloraxStore(dir, (message) => messages.push(message));
+  const store = createSeloraxStore(getDb, (message) => messages.push(message));
   await store.read();
 
   assert.ok(!messages.join(" ").includes("secret-token"));
 });
 
+test("an unreachable database throws rather than reading as empty", async () => {
+  const store = createSeloraxStore(unreachableDb(), () => {});
+  await assert.rejects(() => store.read());
+});
+
 test("concurrent writes leave one coherent result, not a mix", async () => {
-  const store = createSeloraxStore(await freshDir());
+  const store = createSeloraxStore(await freshDb());
   await Promise.all([
     store.write({ ...CONFIG, storeId: "1" }),
     store.write({ ...CONFIG, storeId: "2" }),
@@ -63,13 +91,4 @@ test("concurrent writes leave one coherent result, not a mix", async () => {
 
   const saved = await store.read();
   assert.ok(["1", "2", "3"].includes(saved.storeId));
-});
-
-test("writes JSON that round-trips", async () => {
-  const dir = await freshDir();
-  const store = createSeloraxStore(dir);
-  await store.write(CONFIG);
-
-  const parsed = JSON.parse(await readFile(path.join(dir, "selorax.json"), "utf8"));
-  assert.equal(parsed.storeId, "42");
 });

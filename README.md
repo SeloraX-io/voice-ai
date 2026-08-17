@@ -15,7 +15,8 @@ arrives.
 ```bash
 npm install
 
-cp .env.example .env.local     # then paste your key into GEMINI_API_KEY
+cp .env.example .env.local     # then paste your key into GEMINI_API_KEY,
+                                # and set MONGODB_URI (MONGODB_DB defaults to "voice-ai")
 npm run dev                    # starts BOTH the web app and the voice gateway
 ```
 
@@ -45,6 +46,23 @@ public variables here are `NEXT_PUBLIC_VOICE_GATEWAY_URL`, an endpoint address
 rather than a credential, and `NEXT_PUBLIC_VOICE_GATEWAY_KEY` — a gateway API
 key that is public by necessity, because the console connects from the browser.
 See [Locking the gateway down](#locking-the-gateway-down).
+
+### Configuring `MONGODB_URI`
+
+Also required — the app fails loudly on first load without it. All persistent
+state lives in MongoDB: the agent configuration and its secrets, call history
+and transcripts, SIP and Selorax credentials, and the gateway's API keys. Both
+processes read it, which is what lets them run on different hosts.
+
+```
+MONGODB_URI=your-connection-string
+MONGODB_DB=voice-ai
+```
+
+`MONGODB_DB` selects the database inside the cluster and defaults to
+`voice-ai` — set it explicitly if your Atlas SRV string carries no database
+name and you want something else. `MONGODB_URI` is the single most sensitive
+value in the project: see [Where secrets live](#configuring-the-agent) below.
 
 ### Scripts
 
@@ -169,10 +187,10 @@ protocol cannot drift between them.
 Open the app and use the sidebar. **Agent** holds Conversation, Actions and
 Advanced; **Models & Voice** and **Upload Audio** sit alongside it.
 
-Configuration is saved to `data/agent-config.json` and read fresh at the start of
-every call, so a change takes effect on the next call with no restart. A call
-already in progress keeps the settings it started with — the preview panel says
-so when you save mid-call.
+Configuration is saved to the `agent_config` collection and read fresh at the
+start of every call, so a change takes effect on the next call with no
+restart. A call already in progress keeps the settings it started with — the
+preview panel says so when you save mid-call.
 
 **Test agent** in the sidebar opens a preview panel where you can talk to the
 agent from any screen. A call keeps running while you navigate, and while the
@@ -180,8 +198,11 @@ panel is closed; ending it is always explicit. If you start a test with unsaved
 edits, the panel asks whether to save first, because the call would otherwise
 use the last saved settings.
 
-Secret *values* are written to `data/agent-secrets.json` (gitignored, mode 0600)
-and are never sent to the browser.
+Secret *values* are documents in the `agent_secrets` collection, kept apart
+from the rest of the configuration, and are never sent to the browser. They
+live in MongoDB alongside everything else, which is why `MONGODB_URI` is the
+single most sensitive value in the project — anyone who can open that
+connection string can read every secret and credential this app holds.
 
 ---
 
@@ -196,9 +217,9 @@ and are never sent to the browser.
 - **Client tools** — functions that run in the caller's own browser.
 - **Webhooks** — call events posted to an endpoint you control.
 
-Definitions are saved with the rest of the configuration, in
-`data/agent-config.json`. **The agent does not call them yet** — executing them
-during a call is the next piece of work.
+Definitions are saved with the rest of the configuration, in the
+`agent_config` collection. **The agent does not call them yet** — executing
+them during a call is the next piece of work.
 
 ---
 
@@ -387,12 +408,13 @@ A client presents its key as `Authorization: Bearer <key>`, or — where headers
 cannot be set, which includes every browser `WebSocket` — as `?key=<key>` on the
 gateway URL. The check runs during the HTTP upgrade, so an unauthenticated
 client is refused with a `401` before any session is opened and before anything
-is billed. Only a SHA-256 hash is stored, in `data/api-keys.json`: a key is
-shown once, at mint, and a lost one is replaced rather than recovered. Revoking
-takes effect on the next connection; a call already in progress is left to
-finish. Last-used times are kept apart, in `data/api-keys-usage.json`, so that
-the gateway writing telemetry can never overwrite a revoke the console just
-made.
+is billed. Only a SHA-256 hash is stored, one document per key in the
+`api_keys` collection: a key is shown once, at mint, and a lost one is
+replaced rather than recovered. Revoking takes effect on the next connection;
+a call already in progress is left to finish. Last-used time is a field on
+that same document, updated by the gateway with a fire-and-forget write, so
+the gateway writing telemetry can never race a revoke the console just made —
+a revoke simply deletes the document the stamp would have matched.
 
 The console itself is a browser client, so the preview player and the softphone
 bridge need a key too — `NEXT_PUBLIC_VOICE_GATEWAY_KEY`. Give it its own key so

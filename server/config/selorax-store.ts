@@ -1,24 +1,28 @@
 /**
  * Persistence for the bridge's Selorax connection configuration.
  *
- * Same shape as the other stores here: a JSON file under data/, written
- * temp-file-and-rename so a crash mid-write cannot truncate it, and reads that
- * never throw — a corrupt file degrades to "not configured", which the page can
- * show, rather than taking the route down.
+ * One document, `_id: "singleton"`, in `selorax_config`. A write is a single
+ * upsert, so there is nothing to serialise in-process — which matters, because
+ * an in-process queue never protected against the other process anyway.
  *
- * This file holds an auth token in plaintext. data/ is git-ignored precisely
- * because of files like this one.
+ * A missing document is the first-run path and reads as unconfigured. A
+ * document that fails validation also reads as unconfigured and is left where
+ * it is, so bad data stays recoverable. A database that cannot be reached
+ * THROWS: treating "unreachable" as "unconfigured" would let the settings page
+ * render blank fields and the next save wipe a real configuration.
+ *
+ * This document holds an auth token. Only an error's name is ever logged — a
+ * driver error can quote the query that failed, and the query carries the token.
  */
 
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import path from "node:path";
+import type { Db } from "mongodb";
 
 import {
   EMPTY_SELORAX_CONFIG,
   validateSeloraxConfig,
   type SeloraxConfig,
 } from "../../lib/selorax/config";
+import { getDb, type DbAccessor } from "../db/client";
 
 export type StoreLogger = (message: string) => void;
 
@@ -27,61 +31,49 @@ export interface SeloraxStore {
   write(config: SeloraxConfig): Promise<SeloraxConfig>;
 }
 
-function isMissing(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException | null)?.code === "ENOENT";
+const COLLECTION = "selorax_config";
+const SINGLETON = "singleton";
+
+interface SeloraxDoc {
+  _id: string;
+  value: SeloraxConfig;
 }
 
-function createQueue(): <T>(job: () => Promise<T>) => Promise<T> {
-  let tail: Promise<unknown> = Promise.resolve();
-  return <T>(job: () => Promise<T>): Promise<T> => {
-    const run = tail.then(job, job);
-    tail = run.catch(() => undefined);
-    return run;
-  };
-}
-
-export function createSeloraxStore(dataDir: string, log: StoreLogger = () => {}): SeloraxStore {
-  const file = path.join(dataDir, "selorax.json");
-  const enqueue = createQueue();
+export function createSeloraxStore(
+  getDatabase: DbAccessor,
+  log: StoreLogger = () => {},
+): SeloraxStore {
+  async function collection() {
+    const db: Db = await getDatabase();
+    return db.collection<SeloraxDoc>(COLLECTION);
+  }
 
   return {
     async read(): Promise<SeloraxConfig> {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(await readFile(file, "utf8"));
-      } catch (error) {
-        // Log the error's name only — the file contains an auth token.
-        if (!isMissing(error)) log(`selorax.json is unreadable (${(error as Error).name})`);
-        return EMPTY_SELORAX_CONFIG;
-      }
-      const result = validateSeloraxConfig(parsed);
+      // Not wrapped in try/catch on purpose: a connection or query failure must
+      // reach the caller, not masquerade as "not configured".
+      const doc = await (await collection()).findOne({ _id: SINGLETON });
+      if (!doc) return EMPTY_SELORAX_CONFIG;
+
+      const result = validateSeloraxConfig(doc.value);
       if (!result.ok) {
-        log("selorax.json failed validation; treating it as unconfigured");
+        log("the stored Selorax config failed validation; treating it as unconfigured");
         return EMPTY_SELORAX_CONFIG;
       }
       return result.value;
     },
 
     async write(config: SeloraxConfig): Promise<SeloraxConfig> {
-      return enqueue(async () => {
-        await mkdir(dataDir, { recursive: true });
-        const temp = `${file}.${randomUUID()}.tmp`;
-        try {
-          await writeFile(temp, `${JSON.stringify(config, null, 2)}\n`, {
-            encoding: "utf8",
-            mode: 0o600,
-          });
-          await rename(temp, file);
-        } catch (cause) {
-          await unlink(temp).catch(() => undefined);
-          throw cause;
-        }
-        return config;
-      });
+      await (await collection()).replaceOne(
+        { _id: SINGLETON },
+        { value: config },
+        { upsert: true },
+      );
+      return config;
     },
   };
 }
 
-export const seloraxStore = createSeloraxStore(path.join(process.cwd(), "data"), (message) =>
+export const seloraxStore = createSeloraxStore(getDb, (message) =>
   console.warn(`[selorax] ${message}`),
 );

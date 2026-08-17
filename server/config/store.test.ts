@@ -1,220 +1,161 @@
-import { test } from "node:test";
+import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 
 import { DEFAULT_AGENT_CONFIG } from "../../lib/agent-config/defaults";
+import { AGENT_CONFIG_VERSION, LIMITS } from "../../lib/agent-config/schema";
+import { freshDb, startTestMongo, stopTestMongo, unreachableDb } from "../db/test-db";
 import { createConfigStore } from "./store";
 
-async function freshDir(): Promise<string> {
-  return mkdtemp(path.join(tmpdir(), "agent-config-"));
-}
+before(startTestMongo);
+after(stopTestMongo);
 
-test("returns the defaults when no config file exists", async () => {
-  const store = createConfigStore(await freshDir());
-  const config = await store.read();
-  assert.equal(config.instructions, DEFAULT_AGENT_CONFIG.instructions);
-  assert.equal(config.agentName, DEFAULT_AGENT_CONFIG.agentName);
+test("an unwritten store reads the seed defaults", async () => {
+  const store = createConfigStore(await freshDb());
+  assert.deepEqual(await store.read(), DEFAULT_AGENT_CONFIG);
 });
 
-test("round-trips a written config", async () => {
-  const store = createConfigStore(await freshDir());
-  await store.write({ ...DEFAULT_AGENT_CONFIG, agentName: "sales-bot" });
-  const config = await store.read();
-  assert.equal(config.agentName, "sales-bot");
-});
-
-test("stamps updatedAt on write", async () => {
-  const store = createConfigStore(await freshDir());
-  const before = new Date().toISOString();
-  const saved = await store.write({ ...DEFAULT_AGENT_CONFIG, updatedAt: "stale" });
-  assert.ok(saved.updatedAt >= before);
-});
-
-test("falls back to the defaults when the file is corrupt", async () => {
-  const dir = await freshDir();
-  await mkdir(dir, { recursive: true });
-  await writeFile(path.join(dir, "agent-config.json"), "{ not json", "utf8");
-
-  const warnings: string[] = [];
-  const store = createConfigStore(dir, (message) => warnings.push(message));
-  const config = await store.read();
-
-  assert.equal(config.agentName, DEFAULT_AGENT_CONFIG.agentName);
-  assert.equal(warnings.length, 1);
-});
-
-test("leaves a corrupt file on disk so it stays recoverable", async () => {
-  const dir = await freshDir();
-  await writeFile(path.join(dir, "agent-config.json"), "{ not json", "utf8");
-  const store = createConfigStore(dir, () => {});
-  await store.read();
-  assert.equal(await readFile(path.join(dir, "agent-config.json"), "utf8"), "{ not json");
-});
-
-test("falls back to the defaults on an unknown version", async () => {
-  const dir = await freshDir();
-  const future = JSON.stringify({ ...DEFAULT_AGENT_CONFIG, version: 99 });
-  await writeFile(path.join(dir, "agent-config.json"), future, "utf8");
-
-  const warnings: string[] = [];
-  const store = createConfigStore(dir, (message) => warnings.push(message));
-  const config = await store.read();
-
-  assert.equal(config.version, 1);
-  assert.equal(warnings.length, 1);
-});
-
-test("falls back to the defaults when welcome is missing its message", async () => {
-  const dir = await freshDir();
-  const malformed = JSON.stringify({ ...DEFAULT_AGENT_CONFIG, welcome: { enabled: true } });
-  await writeFile(path.join(dir, "agent-config.json"), malformed, "utf8");
-
-  const warnings: string[] = [];
-  const store = createConfigStore(dir, (message) => warnings.push(message));
-  const config = await store.read();
-
-  assert.equal(config.agentName, DEFAULT_AGENT_CONFIG.agentName);
-  assert.equal(config.welcome.enabled, DEFAULT_AGENT_CONFIG.welcome.enabled);
-  assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /failed validation/);
-});
-
-test("falls back to the defaults rather than throwing when variables is null", async () => {
-  const dir = await freshDir();
-  const malformed = JSON.stringify({ ...DEFAULT_AGENT_CONFIG, variables: null });
-  await writeFile(path.join(dir, "agent-config.json"), malformed, "utf8");
-
-  const warnings: string[] = [];
-  const store = createConfigStore(dir, (message) => warnings.push(message));
-  const config = await store.read();
-
-  assert.deepEqual(config.variables, DEFAULT_AGENT_CONFIG.variables);
-  assert.equal(warnings.length, 1);
-});
-
-test("a valid stored config round-trips its own updatedAt rather than being restamped", async () => {
-  const dir = await freshDir();
-  const store = createConfigStore(dir);
-  const saved = await store.write({ ...DEFAULT_AGENT_CONFIG, agentName: "sales-bot" });
-
-  const config = await store.read();
-  assert.equal(config.updatedAt, saved.updatedAt);
-  assert.equal(config.agentName, "sales-bot");
-});
-
-test("lists no secret keys before any are set", async () => {
-  const store = createConfigStore(await freshDir());
-  assert.deepEqual(await store.listSecretKeys(), []);
-});
-
-test("stores, lists and deletes a secret", async () => {
-  const store = createConfigStore(await freshDir());
-  await store.setSecret("CRM_API_KEY", "abc123");
-  await store.setSecret("OTHER_KEY", "xyz");
-  assert.deepEqual((await store.listSecretKeys()).sort(), ["CRM_API_KEY", "OTHER_KEY"]);
-
-  await store.deleteSecret("OTHER_KEY");
-  assert.deepEqual(await store.listSecretKeys(), ["CRM_API_KEY"]);
-});
-
-test("replaces an existing secret rather than duplicating it", async () => {
-  const store = createConfigStore(await freshDir());
-  await store.setSecret("CRM_API_KEY", "first");
-  await store.setSecret("CRM_API_KEY", "second");
-  assert.deepEqual(await store.listSecretKeys(), ["CRM_API_KEY"]);
-});
-
-test("rejects a secret key that is not upper snake case", async () => {
-  const store = createConfigStore(await freshDir());
-  await assert.rejects(() => store.setSecret("lower-case", "x"), /key/i);
-});
-
-test("writes the secrets file with owner-only permissions", async () => {
-  const dir = await freshDir();
-  const store = createConfigStore(dir);
-  await store.setSecret("CRM_API_KEY", "abc");
-  const { stat } = await import("node:fs/promises");
-  const mode = (await stat(path.join(dir, "agent-secrets.json"))).mode & 0o777;
-  assert.equal(mode, 0o600);
-});
-
-test("never leaks a secret value through the config read path", async () => {
-  const dir = await freshDir();
-  const store = createConfigStore(dir);
-  await store.setSecret("CRM_API_KEY", "super-secret-value");
-  const serialised = JSON.stringify(await store.read());
-  assert.ok(!serialised.includes("super-secret-value"));
-});
-
-test("does not lose a secret when writes overlap", async () => {
-  const store = createConfigStore(await freshDir());
-  await Promise.all([
-    store.setSecret("FIRST_KEY", "1"),
-    store.setSecret("SECOND_KEY", "2"),
-    store.setSecret("THIRD_KEY", "3"),
-  ]);
-  assert.deepEqual(await store.listSecretKeys(), ["FIRST_KEY", "SECOND_KEY", "THIRD_KEY"]);
-});
-
-test("returns a fresh object graph on every fallback read", async () => {
-  const store = createConfigStore(await freshDir());
+test("each fallback read gets its own object graph", async () => {
+  const store = createConfigStore(await freshDb());
   const first = await store.read();
   const second = await store.read();
   assert.notEqual(first.models, second.models);
-  assert.notEqual(first.models.vad, second.models.vad);
-  assert.notEqual(first.variables, second.variables);
-  assert.deepEqual(first, second);
 });
 
-test("logs when the config file is unreadable", async () => {
-  const dir = await freshDir();
-  await writeFile(path.join(dir, "agent-config.json"), "{ not json", "utf8");
+test("writes and reads back", async () => {
+  const store = createConfigStore(await freshDb());
+  const saved = await store.write({ ...DEFAULT_AGENT_CONFIG, agentName: "ada" });
+  assert.equal(saved.agentName, "ada");
+  assert.equal((await store.read()).agentName, "ada");
+});
+
+test("write stamps updatedAt and read preserves it", async () => {
+  const store = createConfigStore(await freshDb());
+  const saved = await store.write({ ...DEFAULT_AGENT_CONFIG, agentName: "ada" });
+  assert.equal((await store.read()).updatedAt, saved.updatedAt);
+});
+
+test("write never persists secretKeys", async () => {
+  const getDb = await freshDb();
+  const store = createConfigStore(getDb);
+  await store.write({ ...DEFAULT_AGENT_CONFIG, secretKeys: ["LEAKED"] });
+
+  const db = await getDb();
+  const doc = await db.collection("agent_config").findOne({ _id: "singleton" as never });
+  assert.deepEqual((doc as unknown as { value: { secretKeys: string[] } }).value.secretKeys, []);
+});
+
+test("a config with an unsupported version reads as defaults", async () => {
+  const getDb = await freshDb();
+  const db = await getDb();
+  await db.collection("agent_config").insertOne({
+    _id: "singleton",
+    value: { ...DEFAULT_AGENT_CONFIG, version: AGENT_CONFIG_VERSION + 1, agentName: "ada" },
+  } as never);
 
   const messages: string[] = [];
-  const store = createConfigStore(dir, (message) => messages.push(message));
-  await store.read();
+  const store = createConfigStore(getDb, (message) => messages.push(message));
 
+  assert.equal((await store.read()).agentName, DEFAULT_AGENT_CONFIG.agentName);
   assert.equal(messages.length, 1);
 });
 
-test("refuses to write over an unparseable secrets file", async () => {
-  const dir = await freshDir();
-  await writeFile(path.join(dir, "agent-secrets.json"), "{ not json", "utf8");
-  const store = createConfigStore(dir, () => {});
-
-  await assert.rejects(() => store.setSecret("CRM_API_KEY", "abc"));
-  await assert.rejects(() => store.deleteSecret("CRM_API_KEY"));
-
-  // The corrupt file must survive, exactly as a corrupt config file does.
-  assert.equal(await readFile(path.join(dir, "agent-secrets.json"), "utf8"), "{ not json");
-});
-
-test("never logs the contents of an unparseable secrets file", async () => {
-  const dir = await freshDir();
-  await writeFile(
-    path.join(dir, "agent-secrets.json"),
-    '{"CRM_API_KEY":"super-secret-value" ',
-    "utf8",
-  );
+test("a config that fails validation reads as defaults and is left in place", async () => {
+  const getDb = await freshDb();
+  const db = await getDb();
+  await db.collection("agent_config").insertOne({
+    _id: "singleton",
+    value: { version: AGENT_CONFIG_VERSION, instructions: 12345 },
+  } as never);
 
   const messages: string[] = [];
-  const store = createConfigStore(dir, (message) => messages.push(message));
-  await store.setSecret("OTHER", "x").catch(() => undefined);
+  const store = createConfigStore(getDb, (message) => messages.push(message));
+  assert.deepEqual(await store.read(), DEFAULT_AGENT_CONFIG);
+  assert.equal(messages.length, 1);
 
-  assert.ok(!messages.join(" ").includes("super-secret-value"));
+  const doc = await db.collection("agent_config").findOne({ _id: "singleton" as never });
+  assert.equal((doc as unknown as { value: { instructions: number } }).value.instructions, 12345);
 });
 
-test("a missing secrets file is still the ordinary first-run path", async () => {
-  const store = createConfigStore(await freshDir(), () => {});
-  await store.setSecret("CRM_API_KEY", "abc");
-  assert.deepEqual(await store.listSecretKeys(), ["CRM_API_KEY"]);
+test("an unreachable database throws from read rather than returning defaults", async () => {
+  const store = createConfigStore(unreachableDb(), () => {});
+  await assert.rejects(() => store.read());
 });
 
-test("listing secret keys survives a corrupt file", async () => {
-  const dir = await freshDir();
-  await writeFile(path.join(dir, "agent-secrets.json"), "{ not json", "utf8");
-  const store = createConfigStore(dir, () => {});
-  assert.deepEqual(await store.listSecretKeys(), []);
+test("secrets round-trip", async () => {
+  const store = createConfigStore(await freshDb());
+  await store.setSecret("STRIPE_KEY", "sk_live_1");
+  assert.deepEqual(await store.resolveSecrets(), { STRIPE_KEY: "sk_live_1" });
+});
+
+test("setSecret overwrites an existing value", async () => {
+  const store = createConfigStore(await freshDb());
+  await store.setSecret("STRIPE_KEY", "one");
+  await store.setSecret("STRIPE_KEY", "two");
+  assert.deepEqual(await store.resolveSecrets(), { STRIPE_KEY: "two" });
+});
+
+test("listSecretKeys returns names sorted, never values", async () => {
+  const store = createConfigStore(await freshDb());
+  await store.setSecret("ZEBRA", "z");
+  await store.setSecret("ALPHA", "a");
+  assert.deepEqual(await store.listSecretKeys(), ["ALPHA", "ZEBRA"]);
+});
+
+test("deleteSecret removes one and leaves the rest", async () => {
+  const store = createConfigStore(await freshDb());
+  await store.setSecret("ALPHA", "a");
+  await store.setSecret("BETA", "b");
+  await store.deleteSecret("ALPHA");
+  assert.deepEqual(await store.listSecretKeys(), ["BETA"]);
+});
+
+test("deleting a secret that is not there is a no-op", async () => {
+  const store = createConfigStore(await freshDb());
+  await store.setSecret("ALPHA", "a");
+  await store.deleteSecret("MISSING");
+  assert.deepEqual(await store.listSecretKeys(), ["ALPHA"]);
+});
+
+test("setSecret rejects a key that is not UPPER_SNAKE_CASE", async () => {
+  const store = createConfigStore(await freshDb());
+  await assert.rejects(() => store.setSecret("lower", "x"), /UPPER_SNAKE_CASE/);
+  await assert.rejects(() => store.setSecret("9LEADING", "x"), /UPPER_SNAKE_CASE/);
+});
+
+test("setSecret rejects an over-long key", async () => {
+  const store = createConfigStore(await freshDb());
+  await assert.rejects(
+    () => store.setSecret("A".repeat(LIMITS.secretKeyMax + 1), "x"),
+    /UPPER_SNAKE_CASE/,
+  );
+});
+
+test("setSecret rejects an over-long value", async () => {
+  const store = createConfigStore(await freshDb());
+  await assert.rejects(
+    () => store.setSecret("BIG", "x".repeat(LIMITS.secretValueMax + 1)),
+    /at most/,
+  );
+});
+
+test("concurrent setSecret calls all survive", async () => {
+  const store = createConfigStore(await freshDb());
+  await Promise.all([
+    store.setSecret("ONE", "1"),
+    store.setSecret("TWO", "2"),
+    store.setSecret("THREE", "3"),
+  ]);
+  assert.deepEqual(await store.listSecretKeys(), ["ONE", "THREE", "TWO"]);
+});
+
+test("resolveSecrets returns {} when the database is unreachable", async () => {
+  const messages: string[] = [];
+  const store = createConfigStore(unreachableDb(), (message) => messages.push(message));
+  assert.deepEqual(await store.resolveSecrets(), {});
+  assert.equal(messages.length, 1);
+});
+
+test("listSecretKeys throws when the database is unreachable", async () => {
+  const store = createConfigStore(unreachableDb(), () => {});
+  await assert.rejects(() => store.listSecretKeys());
 });

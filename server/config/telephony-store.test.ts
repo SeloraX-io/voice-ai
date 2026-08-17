@@ -1,77 +1,80 @@
-import { test } from "node:test";
+import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 
 import { EMPTY_CREDENTIALS } from "../../lib/telephony/credentials";
+import { freshDb, startTestMongo, stopTestMongo, unreachableDb } from "../db/test-db";
 import { createTelephonyStore } from "./telephony-store";
 
-async function freshDir(): Promise<string> {
-  return mkdtemp(path.join(tmpdir(), "telephony-"));
-}
+before(startTestMongo);
+after(stopTestMongo);
 
-const CREDS = {
-  wsUrl: "wss://sip.example.com:8089/ws",
-  sipUri: "sip:ext-8@sip.example.com",
-  sipDomain: "sip.example.com",
-  extension: "ext-8",
-  password: "s3cret",
+const CREDENTIALS = {
+  wsUrl: "wss://pbx.test:8089/ws",
+  sipUri: "sip:ext-8@pbx.test",
+  sipDomain: "pbx.test",
+  extension: "8",
+  password: "hunter2",
 };
 
 test("an unwritten store reads as empty credentials", async () => {
-  const store = createTelephonyStore(await freshDir());
+  const store = createTelephonyStore(await freshDb());
   assert.deepEqual(await store.read(), EMPTY_CREDENTIALS);
 });
 
 test("writes and reads back", async () => {
-  const store = createTelephonyStore(await freshDir());
-  await store.write(CREDS);
-  assert.deepEqual(await store.read(), CREDS);
+  const store = createTelephonyStore(await freshDb());
+  await store.write(CREDENTIALS);
+  assert.deepEqual(await store.read(), CREDENTIALS);
 });
 
-test("a corrupt file reads as empty rather than throwing", async () => {
-  const dir = await freshDir();
-  await writeFile(path.join(dir, "telephony.json"), "{ not json", "utf8");
+test("a second write replaces the first", async () => {
+  const store = createTelephonyStore(await freshDb());
+  await store.write(CREDENTIALS);
+  await store.write({ ...CREDENTIALS, extension: "9" });
+  assert.equal((await store.read()).extension, "9");
+});
+
+test("a document that fails validation reads as empty rather than throwing", async () => {
+  const getDb = await freshDb();
+  const db = await getDb();
+  await db
+    .collection("telephony_credentials")
+    .insertOne({ _id: "singleton", value: { wsUrl: "wss://pbx.test:8089/ws" } } as never);
 
   const messages: string[] = [];
-  const store = createTelephonyStore(dir, (message) => messages.push(message));
+  const store = createTelephonyStore(getDb, (message) => messages.push(message));
 
   assert.deepEqual(await store.read(), EMPTY_CREDENTIALS);
   assert.equal(messages.length, 1);
 });
 
-test("never logs the contents of a corrupt file", async () => {
-  const dir = await freshDir();
-  // The sensitive value must LEAD the file: V8's JSON error message includes the
-  // first part. If buried later, the test silently passes even if implementation
-  // logs error.message instead of error.name.
-  await writeFile(path.join(dir, "telephony.json"), 's3cret-pw', "utf8");
+test("never logs the contents of a bad document", async () => {
+  const getDb = await freshDb();
+  const db = await getDb();
+  await db
+    .collection("telephony_credentials")
+    .insertOne({ _id: "singleton", value: { wsUrl: "sip-password-here" } } as never);
 
   const messages: string[] = [];
-  const store = createTelephonyStore(dir, (message) => messages.push(message));
+  const store = createTelephonyStore(getDb, (message) => messages.push(message));
   await store.read();
 
-  assert.ok(!messages.join(" ").includes("s3cret-pw"));
+  assert.ok(!messages.join(" ").includes("sip-password-here"));
+});
+
+test("an unreachable database throws rather than reading as empty", async () => {
+  const store = createTelephonyStore(unreachableDb(), () => {});
+  await assert.rejects(() => store.read());
 });
 
 test("concurrent writes leave one coherent result, not a mix", async () => {
-  const store = createTelephonyStore(await freshDir());
+  const store = createTelephonyStore(await freshDb());
   await Promise.all([
-    store.write({ ...CREDS, extension: "ext-1" }),
-    store.write({ ...CREDS, extension: "ext-2" }),
-    store.write({ ...CREDS, extension: "ext-3" }),
+    store.write({ ...CREDENTIALS, extension: "1" }),
+    store.write({ ...CREDENTIALS, extension: "2" }),
+    store.write({ ...CREDENTIALS, extension: "3" }),
   ]);
 
   const saved = await store.read();
-  assert.ok(["ext-1", "ext-2", "ext-3"].includes(saved.extension));
-});
-
-test("writes JSON that round-trips", async () => {
-  const dir = await freshDir();
-  const store = createTelephonyStore(dir);
-  await store.write(CREDS);
-
-  const parsed = JSON.parse(await readFile(path.join(dir, "telephony.json"), "utf8"));
-  assert.equal(parsed.extension, "ext-8");
+  assert.ok(["1", "2", "3"].includes(saved.extension));
 });

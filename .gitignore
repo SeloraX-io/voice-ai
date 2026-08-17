@@ -41,7 +41,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# Local runtime state: the saved agent configuration, its secret values, and
-# call history — which holds transcripts of what real callers said. None of it
-# belongs in git.
-/data/
+
+# Subagent-driven-development scratch: ledger, briefs, review packages.
+/.superpowers/

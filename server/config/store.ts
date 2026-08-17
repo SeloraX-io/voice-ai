@@ -1,18 +1,21 @@
 /**
  * Persistence for the agent configuration.
  *
- * Two processes read this: the Next route handlers and the voice gateway. A
- * file on disk is the meeting point, so neither needs to know the other exists.
- * Writes go through a temp file and a rename, which is atomic on the same
- * filesystem — a crash mid-write can never truncate a good config.
+ * Two processes read this: the Next route handlers and the voice gateway. They
+ * meet at the database, so neither needs to know the other exists.
  *
- * Secret values live in their own file, mode 0600 and gitignored. They are
- * never returned by `read()`, and nothing outside this module reads them.
+ * The config is one document, `_id: "singleton"`, in `agent_config`. Secrets
+ * are a document EACH in `agent_secrets`, keyed by name. That split is what
+ * removes the write queue this file used to carry: setting one secret no longer
+ * reads every secret, mutates the set, and writes it back, so two callers
+ * cannot lose each other's change. The old queue only ever serialised one
+ * process anyway.
+ *
+ * Secret values are never returned by `read()`, and nothing outside this module
+ * reads them.
  */
 
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import path from "node:path";
+import type { Db } from "mongodb";
 
 import { DEFAULT_AGENT_CONFIG } from "../../lib/agent-config/defaults";
 import {
@@ -22,11 +25,12 @@ import {
   validateAgentConfig,
   type AgentConfig,
 } from "../../lib/agent-config/schema";
+import { getDb, type DbAccessor } from "../db/client";
 
 export type StoreLogger = (message: string) => void;
 
 export interface ConfigStore {
-  /** The saved config, or the seed defaults if none is readable. Never throws. */
+  /** The saved config, or the seed defaults if none is stored. */
   read(): Promise<AgentConfig>;
   /** Persists a config, stamping `updatedAt`. Returns what was written. */
   write(config: AgentConfig): Promise<AgentConfig>;
@@ -44,113 +48,65 @@ export interface ConfigStore {
   deleteSecret(key: string): Promise<void>;
 }
 
-function isMissing(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException | null)?.code === "ENOENT";
+const CONFIG_COLLECTION = "agent_config";
+const SECRETS_COLLECTION = "agent_secrets";
+const SINGLETON = "singleton";
+
+interface ConfigDoc {
+  _id: string;
+  value: AgentConfig;
 }
 
-/**
- * Serialises the secrets read-modify-write cycle. Atomic writes protect a
- * single write; they do not protect read → mutate → write across two callers,
- * where the later rename would silently drop the earlier caller's change.
- *
- * This is in-process serialization only, which is the right scope here: the
- * gateway process only ever reads the secrets file, and Next is the sole
- * writer. It is not a cross-process lock.
- */
-function createQueue(): <T>(job: () => Promise<T>) => Promise<T> {
-  let tail: Promise<unknown> = Promise.resolve();
-  return <T>(job: () => Promise<T>): Promise<T> => {
-    const run = tail.then(job, job);
-    // Keep the chain alive even when a job rejects, so one failure does not
-    // wedge every later write.
-    tail = run.catch(() => undefined);
-    return run;
-  };
+interface SecretDoc {
+  /** The secret's name, e.g. STRIPE_KEY. */
+  _id: string;
+  value: string;
 }
 
-export function createConfigStore(dataDir: string, log: StoreLogger = () => {}): ConfigStore {
-  const configPath = path.join(dataDir, "agent-config.json");
-  const secretsPath = path.join(dataDir, "agent-secrets.json");
-  const enqueueSecretWrite = createQueue();
-
-  async function writeAtomic(target: string, contents: string, mode: number): Promise<void> {
-    await mkdir(dataDir, { recursive: true });
-    const temp = `${target}.${randomUUID()}.tmp`;
-    try {
-      await writeFile(temp, contents, { encoding: "utf8", mode });
-      await rename(temp, target);
-    } catch (cause) {
-      await unlink(temp).catch(() => undefined);
-      throw cause;
-    }
+export function createConfigStore(
+  getDatabase: DbAccessor,
+  log: StoreLogger = () => {},
+): ConfigStore {
+  async function configs() {
+    const db: Db = await getDatabase();
+    return db.collection<ConfigDoc>(CONFIG_COLLECTION);
   }
 
-  /**
-   * A missing file is the ordinary first-run path. An unparseable one is not:
-   * returning `{}` there would let the next write rename an empty object over
-   * the user's real secrets, destroying every one of them. Throwing keeps the
-   * file on disk and recoverable, matching how the config path behaves.
-   *
-   * The error's message is never logged. Node's JSON.parse SyntaxError embeds a
-   * snippet of the input, which on this file is secret material.
-   */
-  async function readSecrets(): Promise<Record<string, string>> {
-    let raw: string;
-    try {
-      raw = await readFile(secretsPath, "utf8");
-    } catch (error) {
-      if (isMissing(error)) return {};
-      log(`agent-secrets.json could not be read (${(error as Error).name})`);
-      throw new Error("The secrets file could not be read.");
-    }
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (error) {
-      log(`agent-secrets.json is not valid JSON (${(error as Error).name})`);
-      throw new Error("The secrets file is corrupt; it was left untouched.");
-    }
-
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      log("agent-secrets.json is not an object; it was left untouched");
-      throw new Error("The secrets file is corrupt; it was left untouched.");
-    }
-    return parsed as Record<string, string>;
+  async function secrets() {
+    const db: Db = await getDatabase();
+    return db.collection<SecretDoc>(SECRETS_COLLECTION);
   }
 
   return {
     async read(): Promise<AgentConfig> {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(await readFile(configPath, "utf8"));
-      } catch (error) {
-        // A missing file is the first-run path, not a failure.
-        if (!isMissing(error)) {
-          log(`agent-config.json is unreadable, using defaults: ${String(error)}`);
-        }
-        // A shallow copy would share DEFAULT_AGENT_CONFIG's nested objects
-        // (models, welcome, variables) across every fallback read in this
-        // process; structuredClone gives each caller its own object graph.
-        return structuredClone(DEFAULT_AGENT_CONFIG);
-      }
+      // Deliberately uncaught: a connection or query failure must reach the
+      // caller. If it read as "defaults" instead, an outage would render the
+      // editor with seed values and the next save would overwrite real work.
+      const doc = await (await configs()).findOne({ _id: SINGLETON });
 
-      const record = parsed as Partial<AgentConfig> | null;
+      // No document is the first-run path, not a failure. structuredClone
+      // rather than a shallow copy, so nested objects (models, welcome,
+      // variables) are not shared across every fallback read in this process.
+      if (!doc) return structuredClone(DEFAULT_AGENT_CONFIG);
+
+      const record = doc.value as Partial<AgentConfig> | null;
       if (typeof record !== "object" || record === null) {
-        log("agent-config.json is not an object, using defaults");
+        log("the stored agent config is not an object, using defaults");
         return structuredClone(DEFAULT_AGENT_CONFIG);
       }
       if (record.version !== AGENT_CONFIG_VERSION) {
-        // Left on disk untouched so the user's data stays recoverable.
-        log(`agent-config.json has unsupported version ${String(record.version)}, using defaults`);
+        // Left in the database untouched so the user's data stays recoverable.
+        log(
+          `the stored agent config has unsupported version ${String(record.version)}, using defaults`,
+        );
         return structuredClone(DEFAULT_AGENT_CONFIG);
       }
 
       const result = validateAgentConfig(record);
       if (!result.ok) {
-        // Left on disk untouched so the user's data stays recoverable.
+        // Left in the database untouched so the user's data stays recoverable.
         const summary = result.errors.map((error) => error.path || "(root)").join(", ");
-        log(`agent-config.json failed validation (${summary}), using defaults`);
+        log(`the stored agent config failed validation (${summary}), using defaults`);
         return structuredClone(DEFAULT_AGENT_CONFIG);
       }
 
@@ -169,29 +125,34 @@ export function createConfigStore(dataDir: string, log: StoreLogger = () => {}):
         secretKeys: [],
         updatedAt: new Date().toISOString(),
       };
-      await writeAtomic(configPath, `${JSON.stringify(saved, null, 2)}\n`, 0o644);
+      await (await configs()).replaceOne(
+        { _id: SINGLETON },
+        { value: saved },
+        { upsert: true },
+      );
       return saved;
     },
 
     async resolveSecrets(): Promise<Record<string, string>> {
       try {
-        return await readSecrets();
-      } catch {
-        // Already logged by readSecrets. A corrupt file leaves tools
-        // unauthenticated rather than taking the call down; the request will
-        // fail with the endpoint's own 401, which is a legible outcome.
+        const docs = await (await secrets()).find({}).toArray();
+        return Object.fromEntries(docs.map((doc) => [doc._id, doc.value]));
+      } catch (cause) {
+        // The one place that still swallows a failure, and it is deliberate.
+        // Leaving tools unauthenticated is better than taking a live call down:
+        // the request then fails with the endpoint's own 401, which is a
+        // legible outcome. Only the error's NAME is logged — a driver error can
+        // quote the query, and this query is about secret material.
+        log(`the secrets could not be read (${(cause as Error).name})`);
         return {};
       }
     },
 
     async listSecretKeys(): Promise<string[]> {
-      try {
-        return Object.keys(await readSecrets()).sort();
-      } catch {
-        // A corrupt file must not take down the console that lists these names.
-        // Writes still refuse (see setSecret/deleteSecret), so nothing is lost.
-        return [];
-      }
+      const docs = await (await secrets())
+        .find({}, { projection: { _id: 1 } })
+        .toArray();
+      return docs.map((doc) => doc._id).sort();
     },
 
     async setSecret(key: string, value: string): Promise<void> {
@@ -201,20 +162,12 @@ export function createConfigStore(dataDir: string, log: StoreLogger = () => {}):
       if (value.length > LIMITS.secretValueMax) {
         throw new Error(`Secret value must be at most ${LIMITS.secretValueMax} characters.`);
       }
-      await enqueueSecretWrite(async () => {
-        const secrets = await readSecrets();
-        secrets[key] = value;
-        await writeAtomic(secretsPath, `${JSON.stringify(secrets, null, 2)}\n`, 0o600);
-      });
+      // One document, one upsert. No read-modify-write, so no queue.
+      await (await secrets()).updateOne({ _id: key }, { $set: { value } }, { upsert: true });
     },
 
     async deleteSecret(key: string): Promise<void> {
-      await enqueueSecretWrite(async () => {
-        const secrets = await readSecrets();
-        if (!(key in secrets)) return;
-        delete secrets[key];
-        await writeAtomic(secretsPath, `${JSON.stringify(secrets, null, 2)}\n`, 0o600);
-      });
+      await (await secrets()).deleteOne({ _id: key });
     },
   };
 }
@@ -223,10 +176,10 @@ export function createConfigStore(dataDir: string, log: StoreLogger = () => {}):
  * The instance every caller in this process should use.
  *
  * The gateway builds its own store with its own logger; this one serves the
- * Next process, where a silent fallback previously meant a rejected config file
+ * Next process, where a silent fallback previously meant a rejected config
  * produced no output anywhere and the editor showed seed defaults with no clue
  * that saved work had been refused.
  */
-export const configStore = createConfigStore(path.join(process.cwd(), "data"), (message) =>
+export const configStore = createConfigStore(getDb, (message) =>
   console.warn(`[agent-config] ${message}`),
 );

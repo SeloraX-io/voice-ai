@@ -6,8 +6,6 @@
  * as it is generated — there is no request/response turn boundary here.
  */
 
-import path from "node:path";
-
 import {
   EndSensitivity,
   GoogleGenAI,
@@ -28,6 +26,7 @@ import { toolDeclarations } from "../../lib/agent-config/tool-declarations";
 import type { CallChannel } from "../../lib/call-logs/channel";
 import type { UsageReport } from "../../lib/call-logs/pricing";
 import { createConfigStore, type StoreLogger } from "../config/store";
+import { getDb } from "../db/client";
 
 /** One function the model wants run. Mirrors the SDK's `FunctionCall`. */
 export interface LiveFunctionCall {
@@ -72,8 +71,9 @@ function getClient(): GoogleGenAI {
 }
 
 /**
- * Loads and resolves the config for one call. Never throws: a call must connect
- * even if the config file is missing or unreadable.
+ * Loads and resolves the config for one call. `store.read()` throws when the
+ * database is unreachable; this is a designed degradation so a call still
+ * connects on default config rather than failing outright.
  *
  * Builds its own store rather than using the shared instance so store problems
  * reach the gateway's log with the call id attached, instead of vanishing.
@@ -82,12 +82,14 @@ export async function loadResolvedAgentConfig(
   log: StoreLogger = () => {},
 ): Promise<ResolvedAgentConfig> {
   try {
-    const store = createConfigStore(path.join(process.cwd(), "data"), log);
+    const store = createConfigStore(getDb, log);
     return resolveAgentConfig(await store.read());
   } catch (cause) {
-    // Defense in depth: `store.read()` should already never throw, but a call
-    // must connect even if that guarantee is ever violated.
-    log(`loadResolvedAgentConfig failed, using defaults: ${String(cause)}`);
+    // Designed degradation: `store.read()` throws when the database is
+    // unreachable, and a call must still connect even then, on default
+    // config. Only the error's NAME is logged, never its message — the
+    // message can quote the failing query, which can carry secrets.
+    log(`loadResolvedAgentConfig failed, using defaults: ${(cause as Error).name}`);
     return resolveAgentConfig(structuredClone(DEFAULT_AGENT_CONFIG));
   }
 }

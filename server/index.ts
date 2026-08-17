@@ -8,6 +8,7 @@
  *   npm run dev:gateway    # ws://localhost:4000/voice
  */
 
+import { closeDb } from "./db/client";
 import { apiKeyRequired } from "./voice/upgrade-auth";
 import { startVoiceGateway } from "./voice/websocket-server";
 
@@ -52,7 +53,13 @@ function shutdown(signal: string): void {
   log(`${signal} received, closing ${server.clients.size} call(s)`);
 
   for (const client of server.clients) client.close(1001, "server shutting down");
-  server.close(() => process.exit(0));
+  server.close(() => {
+    // Drain the connection pool before leaving, so a SIGTERM closes sockets
+    // cleanly rather than dropping them. Failure here must not block exit.
+    void closeDb()
+      .catch(() => undefined)
+      .then(() => process.exit(0));
+  });
 
   // Never hang forever on a stuck socket.
   setTimeout(() => process.exit(0), 3000).unref();

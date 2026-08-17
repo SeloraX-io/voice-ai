@@ -1,22 +1,24 @@
-import { test } from "node:test";
+import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 
-import { EMPTY_USAGE, type CallRecord } from "../../lib/call-logs/types";
-import { createCallLogStore, MAX_RECORDS } from "./call-log-store";
+import { EMPTY_USAGE, type CallRecord, type CallSummary } from "../../lib/call-logs/types";
+import { freshDb, startTestMongo, stopTestMongo, unreachableDb } from "../db/test-db";
+import { createCallLogStore } from "./call-log-store";
 
-async function freshDir(): Promise<string> {
-  return mkdtemp(path.join(tmpdir(), "call-logs-"));
-}
+before(startTestMongo);
+after(stopTestMongo);
 
-function record(id: string): CallRecord {
+/**
+ * Distinct startedAt per record. Ordering is defined by that field now, not by
+ * insertion order, so records that share a timestamp have no defined order —
+ * real calls never do.
+ */
+function record(id: string, minute = 0): CallRecord {
   return {
     id,
-    startedAt: "2026-08-16T10:00:00.000Z",
-    endedAt: "2026-08-16T10:01:00.000Z",
-    durationMs: 60_000,
+    startedAt: `2026-08-16T10:${String(minute).padStart(2, "0")}:00.000Z`,
+    endedAt: `2026-08-16T10:${String(minute).padStart(2, "0")}:30.000Z`,
+    durationMs: 30_000,
     model: "gemini-3.1-flash-live-preview",
     voice: "Kore",
     usage: { ...EMPTY_USAGE, inputAudioTokens: 1000, reports: 1 },
@@ -29,130 +31,91 @@ function record(id: string): CallRecord {
 }
 
 test("an unwritten history reads as empty", async () => {
-  const store = createCallLogStore(await freshDir());
+  const store = createCallLogStore(await freshDb());
   assert.deepEqual(await store.read(), []);
 });
 
 test("appends and reads back newest first", async () => {
-  const store = createCallLogStore(await freshDir());
-  await store.append(record("first"));
-  await store.append(record("second"));
+  const store = createCallLogStore(await freshDb());
+  await store.append(record("first", 0));
+  await store.append(record("second", 1));
 
-  const all = await store.read();
+  const calls = await store.read();
   assert.deepEqual(
-    all.map((entry) => entry.id),
+    calls.map((call) => call.id),
     ["second", "first"],
   );
 });
 
-test("a corrupt history reads as empty rather than throwing", async () => {
-  const dir = await freshDir();
-  await writeFile(path.join(dir, "call-logs.json"), "{ not json", "utf8");
+test("a stored record round-trips field for field", async () => {
+  const store = createCallLogStore(await freshDb());
+  const original = record("only", 0);
+  await store.append(original);
 
-  const messages: string[] = [];
-  const store = createCallLogStore(dir, (message) => messages.push(message));
-
-  assert.deepEqual(await store.read(), []);
-  assert.equal(messages.length, 1);
+  const [saved] = await store.read();
+  assert.deepEqual(saved, original);
 });
 
-test("never logs the contents of a corrupt history", async () => {
-  const dir = await freshDir();
-  // The sensitive value must LEAD the file: V8's JSON error message includes the
-  // first part. If buried later, the test silently passes even if implementation
-  // logs error.message instead of error.name.
-  await writeFile(path.join(dir, "call-logs.json"), 'customer-speech', "utf8");
+test("update amends a record in place", async () => {
+  const store = createCallLogStore(await freshDb());
+  await store.append(record("call-1", 0));
 
-  const messages: string[] = [];
-  const store = createCallLogStore(dir, (message) => messages.push(message));
-  await store.read();
+  // CallSummary has six required fields; a partial object would not typecheck.
+  const summary: CallSummary = {
+    text: "They asked about opening hours.",
+    language: "en",
+    model: "gemini-3.1-flash",
+    inputTokens: 400,
+    outputTokens: 30,
+    usd: 0.0001,
+  };
+  await store.update("call-1", (current) => ({ ...current, summary }));
 
-  assert.ok(!messages.join(" ").includes("customer-speech"));
+  const [saved] = await store.read();
+  assert.deepEqual(saved.summary, summary);
 });
 
-test("concurrent appends do not lose a record", async () => {
-  const store = createCallLogStore(await freshDir());
-  await Promise.all([store.append(record("a")), store.append(record("b")), store.append(record("c"))]);
+test("update leaves every other field alone", async () => {
+  const store = createCallLogStore(await freshDb());
+  await store.append(record("call-1", 0));
+  await store.update("call-1", (current) => ({ ...current, turns: 99 }));
 
-  const ids = (await store.read()).map((entry) => entry.id).sort();
+  const [saved] = await store.read();
+  assert.equal(saved.turns, 99);
+  assert.equal(saved.model, "gemini-3.1-flash-live-preview");
+  assert.equal(saved.cost.totalUsd, 0.003);
+});
+
+test("updating a record that is not there is a no-op", async () => {
+  const store = createCallLogStore(await freshDb());
+  await store.append(record("call-1", 0));
+  await store.update("missing", (current) => ({ ...current, turns: 99 }));
+
+  const [saved] = await store.read();
+  assert.equal(saved.turns, 2);
+});
+
+test("history is not capped", async () => {
+  const store = createCallLogStore(await freshDb());
+  for (let index = 0; index < 60; index += 1) {
+    await store.append(record(`call-${index}`, index));
+  }
+  assert.equal((await store.read()).length, 60);
+});
+
+test("concurrent appends all survive", async () => {
+  const store = createCallLogStore(await freshDb());
+  await Promise.all([
+    store.append(record("a", 0)),
+    store.append(record("b", 1)),
+    store.append(record("c", 2)),
+  ]);
+
+  const ids = (await store.read()).map((call) => call.id).sort();
   assert.deepEqual(ids, ["a", "b", "c"]);
 });
 
-test("keeps only the most recent MAX_RECORDS, dropping the oldest", async () => {
-  const dir = await freshDir();
-  const store = createCallLogStore(dir);
-
-  // Seed past the cap directly, so the test does not make 500 sequential writes.
-  const seeded = Array.from({ length: MAX_RECORDS + 3 }, (_, i) => record(`old-${i}`));
-  await writeFile(path.join(dir, "call-logs.json"), JSON.stringify(seeded), "utf8");
-
-  await store.append(record("newest"));
-
-  const all = await store.read();
-  assert.equal(all.length, MAX_RECORDS);
-  assert.equal(all[0].id, "newest");
-  // The four oldest are gone: three over the cap, plus one displaced by the append.
-  assert.ok(!all.some((entry) => entry.id === "old-0"));
-  assert.ok(!all.some((entry) => entry.id === "old-3"));
-});
-
-test("writes valid JSON that round-trips", async () => {
-  const dir = await freshDir();
-  const store = createCallLogStore(dir);
-  await store.append(record("only"));
-
-  const raw = await readFile(path.join(dir, "call-logs.json"), "utf8");
-  const parsed = JSON.parse(raw);
-  assert.equal(parsed.length, 1);
-  assert.equal(parsed[0].cost.totalUsd, 0.003);
-});
-
-test("amends a record after the call, for a summary that arrives late", async () => {
-  const store = createCallLogStore(await freshDir());
-  await store.append(record("a"));
-  await store.append(record("b"));
-
-  await store.update("a", (current) => ({
-    ...current,
-    summary: {
-      text: "The caller asked about an order.",
-      language: "en",
-      model: "gemini-2.5-flash",
-      inputTokens: 500,
-      outputTokens: 60,
-      usd: 0.0003,
-    },
-  }));
-
-  const all = await store.read();
-  const amended = all.find((entry) => entry.id === "a");
-  assert.equal(amended?.summary?.text, "The caller asked about an order.");
-  // The other record must be untouched by an update to its neighbour.
-  assert.equal(all.find((entry) => entry.id === "b")?.summary, undefined);
-});
-
-test("updating a record that has aged out is a no-op, not a crash", async () => {
-  const store = createCallLogStore(await freshDir());
-  await store.append(record("only"));
-  await store.update("long-gone", (current) => ({ ...current, turns: 99 }));
-
-  const all = await store.read();
-  assert.equal(all.length, 1);
-  assert.equal(all[0].turns, 2);
-});
-
-test("a summary write does not race an append", async () => {
-  const store = createCallLogStore(await freshDir());
-  await store.append(record("first"));
-
-  // Both go through the same queue, so neither can read-modify-write over the
-  // other — the failure this guards against is a lost record, not a lost field.
-  await Promise.all([
-    store.append(record("second")),
-    store.update("first", (current) => ({ ...current, turns: 42 })),
-  ]);
-
-  const all = await store.read();
-  assert.equal(all.length, 2);
-  assert.equal(all.find((entry) => entry.id === "first")?.turns, 42);
+test("an unreachable database throws rather than reading as empty", async () => {
+  const store = createCallLogStore(unreachableDb(), () => {});
+  await assert.rejects(() => store.read());
 });

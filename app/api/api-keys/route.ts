@@ -9,6 +9,7 @@
  * Runs on the Node runtime because the store touches the filesystem.
  */
 
+import { MongoError } from "mongodb";
 import { NextResponse } from "next/server";
 
 import { MAX_NAME_CHARS } from "@/lib/api-keys/types";
@@ -44,8 +45,19 @@ export async function POST(request: Request): Promise<NextResponse> {
     // The only time this plaintext exists outside the client that asked for it.
     return NextResponse.json({ key: minted.key, keys: await apiKeyStore.list() });
   } catch (cause) {
-    // The message is the store's own ("Revoke one first"), never key material.
+    // `mint()` now calls `countDocuments()` and `insertOne()`, either of which
+    // can reject with a driver error instead of the store's own validation
+    // error — and a driver error can quote the failing query, which here can
+    // carry a full key hash or the cluster hostname. Never interpolate it into
+    // the response; only the store's own message (never a `MongoError`) is
+    // safe to echo back.
     console.error("[api-keys] mint failed:", (cause as Error).name);
+    if (cause instanceof MongoError) {
+      return NextResponse.json(
+        { errors: [{ path: "", message: "Could not mint the key. Try again shortly." }] },
+        { status: 503 },
+      );
+    }
     return NextResponse.json(
       { errors: [{ path: "", message: (cause as Error).message || "Could not mint the key." }] },
       { status: 400 },
@@ -67,7 +79,7 @@ export async function DELETE(request: Request): Promise<NextResponse> {
       );
     }
   } catch (cause) {
-    console.error("[api-keys] revoke failed:", cause);
+    console.error("[api-keys] revoke failed:", (cause as Error).name);
     return NextResponse.json(
       { errors: [{ path: "", message: "Could not revoke the key." }] },
       { status: 500 },
