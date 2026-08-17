@@ -27,6 +27,7 @@ export const AGENT_ROUTES: readonly NavRoute[] = [
   { href: "/upload", label: "Upload Audio", group: null },
   { href: "/calls", label: "Calls", group: null },
   { href: "/telephony", label: "Telephony", group: null },
+  { href: "/embed", label: "Embed", group: null },
   { href: "/settings/keys", label: "API Keys", group: null },
   { href: "/settings/selorax", label: "Selorax", group: null },
 ] as const;
