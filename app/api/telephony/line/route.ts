@@ -26,6 +26,10 @@ export const dynamic = "force-dynamic";
 // a status here is a compile error, not a runtime 500.
 const STATUS_BY_CODE: Record<SeloraxErrorCode, number> = {
   token_expired: 401,
+  // Not 401: Selorax refused the request's shape, not the operator's token.
+  // Sending this back as 401 is what makes the page say "re-authenticate" for
+  // a bug the operator cannot fix from the settings form.
+  session_required: 500,
   extension_not_active: 503,
   calling_disabled: 503,
   unreachable: 502,

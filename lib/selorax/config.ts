@@ -14,7 +14,12 @@ export interface SeloraxConfig {
   baseUrl: string;
   /** The AI user's x-auth-token. Server-side only. */
   authToken: string;
-  /** Sent as x-store-id. A string because it travels as a header. */
+  /**
+   * The store this bridge serves. NOT sent as `x-store-id` — that header puts
+   * the request on Selorax's store-switching path and gets a 401 demanding a
+   * dashboard session. The token already carries the store; this only names
+   * the device, via `deviceIdFor`. A string because it came from a form.
+   */
   storeId: string;
 }
 

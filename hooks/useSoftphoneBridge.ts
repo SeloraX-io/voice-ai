@@ -35,6 +35,7 @@ import {
 } from "@/lib/telephony/bridge-state";
 import type { SipCredentials } from "@/lib/telephony/credentials";
 import { SipBridge } from "@/lib/telephony/sip-bridge";
+import { trace } from "@/lib/telephony/trace";
 import { resolveGatewayUrl, VoiceClient } from "@/lib/websocket/voice-client";
 import type { ServerMessage, Speaker } from "@/types/voice";
 
@@ -186,6 +187,22 @@ function phoneGatewayUrl(from: string | null, to: string | null): string {
   if (from !== null) url.searchParams.set("from", from);
   if (to !== null) url.searchParams.set("to", to);
   return url.toString();
+}
+
+/**
+ * The gateway URL with its access key removed, for tracing. The key is a
+ * `NEXT_PUBLIC_` value and so already in the bundle, but a console line is a
+ * thing people paste into issues and chat logs — the host and path are what
+ * diagnose a connection failure, and the key adds nothing to that.
+ */
+function stripKey(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.delete("key");
+    return parsed.toString();
+  } catch {
+    return "<unparseable gateway url>";
+  }
 }
 
 export function useSoftphoneBridge(): SoftphoneBridgeController {
@@ -468,6 +485,12 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
       // offline. Building a call there would open a Gemini session with nothing
       // to answer, and leave `answeringRef` stuck true so every later INVITE
       // got 480.
+      trace("incoming", {
+        from: info.from,
+        to: info.to,
+        offline: !sipRef.current,
+        alreadyAnswering: answeringRef.current,
+      });
       if (!sipRef.current) return;
 
       if (answeringRef.current) {
@@ -503,6 +526,7 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
           await player.start("stream");
           const outbound = player.outputStream;
           if (!outbound) throw new Error("The audio player produced no outgoing stream.");
+          trace("answer.playerStarted", { tracks: outbound.getAudioTracks().length });
 
           // `info.from`/`info.to` are exactly what was just dispatched onto
           // `BridgeState.from`/`.to` above — read from here rather than the
@@ -515,7 +539,12 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
             onError: (error) => setNotice(error.message),
           });
           clientRef.current = client;
+          // The gateway round trip is the step most likely to fail on a machine
+          // where the web app runs but the gateway process does not, and it
+          // happens *before* the answer — so it fails as "never picked up".
+          trace("answer.gatewayConnecting", { url: stripKey(phoneGatewayUrl(info.from, info.to)) });
           await client.connect();
+          trace("answer.gatewayOpen");
 
           // Re-read rather than reusing the earlier check: going offline during
           // the connect above must not leave a Gemini session running against a
@@ -527,6 +556,12 @@ export function useSoftphoneBridge(): SoftphoneBridgeController {
           // trip is a worse outcome than a call missing from a report.
           reportInboundCall(lineModeRef.current, "answered", info.from);
         } catch (cause) {
+          trace("answer.failed", {
+            reason: describe(cause, "unknown"),
+            // Names the stage: a client that was never stored means the player
+            // failed, one that was stored means the gateway or answer did.
+            hadGatewayClient: clientRef.current !== null,
+          });
           setNotice(
             `${describe(cause, "Could not reach the voice gateway.")} The call was not answered.`,
           );

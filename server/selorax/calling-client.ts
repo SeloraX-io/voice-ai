@@ -33,6 +33,7 @@ export interface SeloraxLine {
 
 export type SeloraxErrorCode =
   | "token_expired"
+  | "session_required"
   | "extension_not_active"
   | "calling_disabled"
   | "unreachable"
@@ -77,6 +78,13 @@ const CAUSE_MESSAGES: Readonly<Record<string, string>> = {
     "The AI user needs an extension in Selorax — none is currently active. Provision one for it in Selorax.",
   calling_disabled:
     "Calling is disabled for the AI user in Selorax. Ask an operator to enable it.",
+  // Deliberately says nothing about expiry. Selorax returns this when a
+  // request lands on the store-switching path, which wants a registered
+  // dashboard session — the token can be perfectly valid and still get it.
+  // Reading it as "expired" once sent an operator off to reissue a token with
+  // 89 days left on it; see the `x-store-id` note in `headers()` below.
+  session_required:
+    "Selorax rejected the request as having no signed-in session. This is a bridge bug, not an expired token — the request carried a header that put it on Selorax's store-switching path.",
 };
 
 /**
@@ -143,10 +151,24 @@ export function createCallingClient(
 ): CallingClient {
   const deviceId = deviceIdFor(config.storeId);
 
+  /**
+   * Identity for a calling request: the token, and the device the claim is
+   * made for.
+   *
+   * **No `x-store-id`.** The design called for one, and it was wrong. Selorax
+   * treats that header as "act on this store", a path that requires a
+   * registered dashboard session; a headless bridge has none, so every request
+   * came back 401 `session_required` — including ones whose `x-store-id`
+   * exactly matched the `store_id` claim inside the token. Verified against
+   * the live API: token alone → 200, token + any non-empty `x-store-id` → 401.
+   *
+   * The store is not lost by dropping it. It is a claim in the token, which is
+   * what scopes the request; `config.storeId` still names the device via
+   * `deviceIdFor`.
+   */
   function headers(extra?: Record<string, string>): Record<string, string> {
     return {
       "x-auth-token": config.authToken,
-      "x-store-id": config.storeId,
       "x-device-id": deviceId,
       ...extra,
     };

@@ -148,18 +148,29 @@ starts holding the Selorax connection:
 interface SeloraxConfig {
   baseUrl: string;    // https://api.selorax.io
   authToken: string;  // the AI user's x-auth-token
-  storeId: string;    // sent as x-store-id
+  storeId: string;    // names the device; NOT sent as a header — see below
 }
 ```
+
+**Correction, verified against the live API:** an earlier draft of this section
+had the bridge send `storeId` as `x-store-id`. That header is what Selorax uses
+for "act on this store", and it requires a registered dashboard session — so
+every call came back `401 session_required`, *including* calls whose
+`x-store-id` matched the `store_id` claim in the token itself. Token alone
+returns 200. The store scope comes from the token; `storeId` stays in config
+only to derive the device id.
 
 The device id is derived (`ai-bridge-${storeId}`), not configured — a value
 with one correct answer should not be a field someone can get wrong.
 
 **6.2 A server-only Selorax client.** `server/selorax/calling-client.ts`, never
-imported into a client component. Sends `x-auth-token`, `x-store-id` and
-`x-device-id`; maps failures to intelligible errors rather than propagating raw
-status codes. A `401` means the token expired and must say so in those words —
-"Unauthorized" ninety days later is a support ticket.
+imported into a client component. Sends `x-auth-token` and `x-device-id` — and
+no `x-store-id`, per the correction in §6.1. Maps failures to intelligible
+errors rather than propagating raw status codes. A bare `401` means the token
+expired and must say so in those words — "Unauthorized" ninety days later is a
+support ticket. But a `401` carrying a `code` must report *that* cause instead:
+`session_required` is not an expiry, and calling it one contradicts the expiry
+date the settings page shows from the token's own `exp`.
 
 **6.3 Three proxy routes**, mirroring the existing `app/api/telephony/route.ts`
 conventions (`runtime = "nodejs"`, `dynamic = "force-dynamic"`):

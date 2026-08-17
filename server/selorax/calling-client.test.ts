@@ -41,9 +41,28 @@ test("asks the right endpoint with the right identity headers", async () => {
   assert.equal(calls[0].url, "https://api.selorax.io/api/calling/extension");
   const headers = calls[0].init.headers as Record<string, string>;
   assert.equal(headers["x-auth-token"], "token-abc");
-  assert.equal(headers["x-store-id"], "42");
   // Stable, so a restart does not look like a new device and churn the claim.
   assert.equal(headers["x-device-id"], "ai-bridge-42");
+});
+
+test("never sends x-store-id — it makes Selorax demand a dashboard session", async () => {
+  // Verified against the live API: `x-auth-token` alone returns 200, and
+  // adding *any* non-empty `x-store-id` — even one matching the token's own
+  // `store_id` claim — turns the same request into 401 `session_required`.
+  // That header puts the request on the store-switching path, which wants a
+  // registered browser session the bridge does not and cannot have. The store
+  // is already in the token; sending it again only breaks the request.
+  const { impl, calls } = stub(200, LINE);
+  const client = createCallingClient(CONFIG, impl);
+
+  await client.getLine();
+  await client.reportAnswered("+8801700000000");
+  await client.reportDeclined("+8801700000000");
+
+  for (const call of calls) {
+    const headers = call.init.headers as Record<string, string>;
+    assert.ok(!("x-store-id" in headers), `${call.url} sent x-store-id`);
+  }
 });
 
 test("returns the SIP line and the TURN servers", async () => {
@@ -95,6 +114,30 @@ test("calling disabled is reported in plain language, not a machine code", async
   assert.equal((error as SeloraxError).code, "calling_disabled");
   assert.match((error as SeloraxError).message, /calling is disabled/i);
   assert.ok(!(error as SeloraxError).message.includes("calling_disabled"));
+});
+
+test("a rejected session is not reported as an expired token", async () => {
+  // The failure that cost a debugging session: Selorax answers 401 with
+  // `session_required`, the client called it "likely expired", and the
+  // settings page said the token had 89 days left. Two true-looking claims
+  // pointing opposite ways sends the operator to reissue a perfectly good
+  // token. This cause is not about expiry and must not say it is.
+  const { impl } = stub(401, {
+    message: "Session not registered. Please sign in again.",
+    code: "session_required",
+    status: 401,
+  });
+  const error = await createCallingClient(CONFIG, impl)
+    .getLine()
+    .catch((cause: unknown) => cause);
+
+  assert.ok(error instanceof SeloraxError);
+  assert.equal((error as SeloraxError).code, "session_required");
+  assert.ok(!(error as SeloraxError).message.includes("session_required"));
+  // Denying the expiry reading is fine — asserting it is not. What must never
+  // survive is the instruction to go reissue a token that has months left.
+  assert.doesNotMatch((error as SeloraxError).message, /likely expired|issue a new one/i);
+  assert.match((error as SeloraxError).message, /not an expired token/i);
 });
 
 test("a specific cause wins even when the status is also 401", async () => {

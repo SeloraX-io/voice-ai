@@ -8,6 +8,9 @@
  * AudioCapture does not own the tracks in the stream it is given: it never
  * calls getUserMedia and its stop() never calls track.stop(). Releasing
  * tracks is the caller's responsibility (see MicrophoneCapture.stop()).
+ *
+ * See `attachSink` for why every stream is also parked on a muted <audio>
+ * element. Without it a phone call is one-way — the caller is never heard.
  */
 
 import {
@@ -27,12 +30,50 @@ export interface AudioCaptureHandlers {
   onError: (error: Error) => void;
 }
 
+/**
+ * Parks a stream on a muted, playing <audio> element and returns it.
+ *
+ * **This is not redundant, and removing it silently breaks phone calls.**
+ * Chromium will not render a *remote* WebRTC MediaStream into Web Audio unless
+ * that same stream is also sunk into an HTMLMediaElement that is playing
+ * (crbug.com/121673). Without the element, `createMediaStreamSource()` yields a
+ * node that emits digital silence forever: no error, no warning, RMS pinned at
+ * zero, RTP arriving normally the whole time. The symptom is a call where the
+ * agent is heard perfectly and the caller is never heard at all.
+ *
+ * `getUserMedia` streams do not need this, which is why the browser preview
+ * works and only the phone leg breaks. It is applied to every stream anyway:
+ * one code path is cheaper to keep correct than two, and for a local stream a
+ * muted element is a no-op.
+ *
+ * Muted is deliberate. The element exists to make Chromium pull on the stream,
+ * not to be listened to — unmuted it would put the caller on the operator's
+ * speakers and straight back into the agent's own microphone path. Muted also
+ * keeps it clear of autoplay policy, since a call is answered programmatically.
+ */
+function attachSink(stream: MediaStream): HTMLAudioElement | null {
+  if (typeof document === "undefined") return null;
+
+  const element = document.createElement("audio");
+  element.srcObject = stream;
+  element.muted = true;
+  // Not in the document: an element only has to be playing, not rendered.
+  element.play().catch(() => {
+    // Autoplay refused. The capture graph is still built — a call with no
+    // inbound audio beats no call — and the failure is visible as a flat
+    // caller waveform rather than as an exception on the answer path.
+  });
+  return element;
+}
+
 export class AudioCapture {
   private context: AudioContext | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
   private worklet: AudioWorkletNode | null = null;
   private sink: GainNode | null = null;
   private stream: MediaStream | null = null;
+  /** Keeps the remote stream being rendered — see `attachSink`. */
+  private sinkElement: HTMLAudioElement | null = null;
   private muted = false;
   private running = false;
 
@@ -81,6 +122,9 @@ export class AudioCapture {
       this.handlers.onError(new Error("The audio capture worklet stopped unexpectedly."));
     };
 
+    // MUST happen before createMediaStreamSource, and must outlive it.
+    this.sinkElement = attachSink(this.stream);
+
     this.source = this.context.createMediaStreamSource(this.stream);
     // Silent sink: keeps the worklet inside the rendering graph without
     // routing the microphone back to the speakers.
@@ -103,6 +147,13 @@ export class AudioCapture {
   addTrack(track: MediaStreamTrack): void {
     if (!this.stream || !this.context || !this.source) return;
     this.stream.addTrack(track);
+    // Re-point the sink at the grown stream for the same reason the source is
+    // rebuilt below — a late track that Chromium is not rendering is a track
+    // Web Audio reads as silence, which is this method's whole purpose.
+    if (this.sinkElement) {
+      this.sinkElement.srcObject = this.stream;
+      this.sinkElement.play().catch(() => undefined);
+    }
     // Rebuild the source node: a MediaStreamAudioSourceNode is bound to the
     // track set it was created with and does not pick up additions.
     this.source.disconnect();
@@ -129,6 +180,15 @@ export class AudioCapture {
     this.source = null;
     this.sink?.disconnect();
     this.sink = null;
+
+    // Detached before the stream reference goes, so the element cannot keep a
+    // finished call's tracks being rendered. Pausing alone is not enough —
+    // srcObject holds the stream alive.
+    if (this.sinkElement) {
+      this.sinkElement.pause();
+      this.sinkElement.srcObject = null;
+      this.sinkElement = null;
+    }
 
     // AudioCapture does not own the stream's tracks — it never called
     // getUserMedia, so it must not stop them. The caller (e.g.

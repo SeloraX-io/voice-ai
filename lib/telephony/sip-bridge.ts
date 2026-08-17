@@ -16,6 +16,7 @@ import type { RTCSession } from "jssip/lib/RTCSession";
 import type { RTCSessionEvent, UA } from "jssip/lib/UA";
 
 import type { SipCredentials } from "./credentials";
+import { causeOf, trace } from "./trace";
 
 export interface SipBridgeHandlers {
   onRegistered(): void;
@@ -71,6 +72,8 @@ export class SipBridge {
   private remoteStream: MediaStream | null = null;
   /** `ended`, `failed` and the ICE watchdog can all fire for one call. The shell sees one. */
   private endedEmitted = false;
+  /** Pending RTP probes, cancelled with the call so they cannot outlive it. */
+  private readonly mediaProbes = new Set<ReturnType<typeof setTimeout>>();
 
   constructor(private readonly handlers: SipBridgeHandlers) {}
 
@@ -106,10 +109,21 @@ export class SipBridge {
       session_timers: false,
     });
 
-    ua.on("registered", () => this.handlers.onRegistered());
+    // The registered contact is the whole question when an INVITE never
+    // arrives: Asterisk rings whatever it has bound to this AOR, and if that is
+    // some other device the browser sits here "online" and never hears a thing.
+    ua.on("connected", () => trace("sip.transport.connected", { wsUrl: creds.wsUrl }));
+    ua.on("registered", () => {
+      trace("sip.registered", { uri: creds.sipUri, extension: creds.extension });
+      this.handlers.onRegistered();
+    });
+    ua.on("unregistered", (event) =>
+      trace("sip.unregistered", { cause: causeOf((event as { cause?: unknown })?.cause) }),
+    );
 
     ua.on("registrationFailed", (event) => {
       const cause = event.cause ? asString(event.cause) : "";
+      trace("sip.registrationFailed", { cause: causeOf(cause) });
       this.handlers.onRegistrationFailed(
         cause.length > 0
           ? `SIP registration was refused (${cause}).`
@@ -149,6 +163,11 @@ export class SipBridge {
    * only its per-session one does anything.
    */
   answer(mediaStream: MediaStream): void {
+    trace("sip.answer", {
+      hasSession: this.session !== null,
+      outgoingTracks: mediaStream.getAudioTracks().length,
+      iceServers: this.pcConfig?.iceServers?.length ?? 0,
+    });
     this.session?.answer({
       mediaStream,
       // Undefined when no ICE servers were claimed, which is what JsSIP's own
@@ -207,12 +226,25 @@ export class SipBridge {
   }
 
   private handleNewSession(event: RTCSessionEvent): void {
+    // The single most valuable line in the bridge: it separates "Asterisk never
+    // sent us the call" from every other cause of a silent failure.
+    trace("sip.newRTCSession", {
+      originator: asString(event.originator),
+      from: identityOf(event.session, "remote"),
+      to: identityOf(event.session, "local"),
+      hasLiveSession: this.session !== null,
+    });
+
     // Outbound calls are out of scope; this bridge only answers.
-    if (asString(event.originator) !== "remote") return;
+    if (asString(event.originator) !== "remote") {
+      trace("sip.ignored.notInbound");
+      return;
+    }
 
     // One call at a time. A second INVITE is refused here rather than being
     // dropped silently, so the caller hears busy instead of ringing forever.
     if (this.session) {
+      trace("sip.rejected.busy", { status: BUSY_STATUS });
       try {
         event.session.terminate({ status_code: BUSY_STATUS });
       } catch {
@@ -226,8 +258,22 @@ export class SipBridge {
     this.endedEmitted = false;
     this.remoteStream = null;
 
-    session.on("ended", () => this.finishSession());
-    session.on("failed", () => this.finishSession());
+    session.on("ended", (event) => {
+      trace("sip.session.ended", {
+        originator: asString((event as { originator?: unknown })?.originator),
+        cause: causeOf((event as { cause?: unknown })?.cause),
+      });
+      this.finishSession();
+    });
+    // `failed` carries why the call never became a call — a rejection status, a
+    // codec mismatch, an ICE failure. Losing it is losing the diagnosis.
+    session.on("failed", (event) => {
+      trace("sip.session.failed", {
+        originator: asString((event as { originator?: unknown })?.originator),
+        cause: causeOf((event as { cause?: unknown })?.cause),
+      });
+      this.finishSession();
+    });
 
     // Subscribed here rather than after answer(): JsSIP emits this while
     // building the peer connection inside answer(), so a later subscription
@@ -276,10 +322,69 @@ export class SipBridge {
         this.handleMediaFailure(pc);
       }
     };
-    pc.addEventListener("iceconnectionstatechange", watchdog);
-    pc.addEventListener("connectionstatechange", watchdog);
+    this.probeMedia(pc);
+
+    pc.addEventListener("iceconnectionstatechange", () => {
+      trace("pc.iceConnectionState", { state: pc.iceConnectionState });
+      watchdog();
+    });
+    pc.addEventListener("connectionstatechange", () => {
+      trace("pc.connectionState", { state: pc.connectionState });
+      watchdog();
+    });
 
     this.collectReceivers();
+  }
+
+  /**
+   * Samples RTP counters a few times early in the call.
+   *
+   * This exists to settle one question quickly, because the two causes of
+   * "the caller cannot be heard" look identical from the outside and have
+   * nothing in common: either RTP is not arriving (a NAT, ICE or codec
+   * problem, `inboundBytes` flat at 0) or it is arriving and something after
+   * the peer connection is dropping it (`inboundBytes` climbing while the
+   * caller's waveform stays flat). Three samples is enough to tell a stalled
+   * counter from a climbing one, and then it stops — this is a diagnostic,
+   * not a monitor.
+   */
+  private probeMedia(pc: RTCPeerConnection): void {
+    const at = [2000, 5000, 10000];
+    for (const delay of at) {
+      const timer = setTimeout(() => {
+        this.mediaProbes.delete(timer);
+        // A probe from a call that has already gone away tells us nothing.
+        if (this.peerConnection !== pc) return;
+        void pc
+          .getStats()
+          .then((report) => {
+            let inboundBytes = 0;
+            let inboundPackets = 0;
+            let outboundBytes = 0;
+            let candidatePair = "unknown";
+            report.forEach((entry: Record<string, unknown>) => {
+              if (entry.type === "inbound-rtp" && entry.kind === "audio") {
+                inboundBytes += Number(entry.bytesReceived ?? 0);
+                inboundPackets += Number(entry.packetsReceived ?? 0);
+              }
+              if (entry.type === "outbound-rtp" && entry.kind === "audio") {
+                outboundBytes += Number(entry.bytesSent ?? 0);
+              }
+              if (entry.type === "candidate-pair" && entry.state === "succeeded") {
+                candidatePair = `${asString(entry.localCandidateId)}→${asString(entry.remoteCandidateId)}`;
+              }
+            });
+            trace(`media.rtp@${delay}ms`, {
+              inboundBytes,
+              inboundPackets,
+              outboundBytes,
+              candidatePair,
+            });
+          })
+          .catch(() => undefined);
+      }, delay);
+      this.mediaProbes.add(timer);
+    }
   }
 
   /**
@@ -327,6 +432,7 @@ export class SipBridge {
     if (track.kind !== "audio") return;
 
     if (!this.remoteStream) {
+      trace("media.firstRemoteTrack", { id: track.id, muted: track.muted });
       this.remoteStream = new MediaStream([track]);
       this.handlers.onAnswered(this.remoteStream);
       return;
@@ -340,6 +446,8 @@ export class SipBridge {
   }
 
   private clearSession(): void {
+    for (const timer of this.mediaProbes) clearTimeout(timer);
+    this.mediaProbes.clear();
     this.session = null;
     this.peerConnection = null;
     this.remoteStream = null;
