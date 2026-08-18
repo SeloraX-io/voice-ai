@@ -221,10 +221,6 @@ const STYLES = `
   --vw-btn-text: #ffffff;
   --vw-ghost-border: rgba(0, 0, 0, 0.10);
   --vw-ghost-hover: rgba(0, 0, 0, 0.04);
-  --vw-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.04),
-    0 6px 20px rgba(0, 0, 0, 0.07),
-    0 18px 44px rgba(0, 0, 0, 0.09);
 
   height: 100%;
   width: 100%;
@@ -248,11 +244,7 @@ const STYLES = `
     --vw-btn: #fafafa;
     --vw-btn-text: #09090b;
     --vw-ghost-border: rgba(255, 255, 255, 0.14);
-    --vw-ghost-hover: rgba(255, 255, 255, 0.06);
-    --vw-shadow:
-      0 1px 2px rgba(0, 0, 0, 0.4),
-      0 6px 20px rgba(0, 0, 0, 0.5),
-      0 18px 44px rgba(0, 0, 0, 0.55);
+    --vw-ghost-hover: rgba(255, 255, 255, 0.06)
   }
 }
 
