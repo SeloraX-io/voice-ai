@@ -10,9 +10,21 @@
 
 import { closeDb } from "./db/client";
 import { apiKeyRequired } from "./voice/upgrade-auth";
-import { startVoiceGateway } from "./voice/websocket-server";
+import { HEALTH_PATH, startVoiceGateway } from "./voice/websocket-server";
 
-const PORT = Number.parseInt(process.env.VOICE_GATEWAY_PORT ?? "4000", 10);
+/**
+ * `PORT` wins over our own knob on purpose.
+ *
+ * Every container host — App Platform, Heroku, Cloud Run, Fly — assigns the
+ * port it will health-check and injects it as `PORT`. Honouring that first
+ * means a deploy works with no configuration; ignoring it means the platform
+ * probes one port while the gateway listens on another, and the only symptom
+ * is a rolled-back deploy whose logs say the gateway started fine.
+ *
+ * `VOICE_GATEWAY_PORT` stays as the local override, which is where nothing
+ * sets `PORT` and 4000 is what the console expects.
+ */
+const PORT = Number.parseInt(process.env.PORT ?? process.env.VOICE_GATEWAY_PORT ?? "4000", 10);
 const PATH = process.env.VOICE_GATEWAY_PATH ?? "/voice";
 
 function log(message: string, meta?: Record<string, unknown>): void {
@@ -30,8 +42,8 @@ if (!process.env.GEMINI_API_KEY) {
 
 const server = startVoiceGateway({ port: PORT, path: PATH, log });
 
-server.on("listening", () => {
-  log(`listening on ws://localhost:${PORT}${PATH}`);
+server.onListening(() => {
+  log(`listening on port ${PORT} — calls at ${PATH}, health at ${HEALTH_PATH}`);
   // Said out loud on every start: an open gateway spends the owner's money for
   // whoever finds it, and that is too easy to leave switched off by accident.
   log(
@@ -41,7 +53,7 @@ server.on("listening", () => {
           "(set VOICE_GATEWAY_REQUIRE_KEY=1 to demand one)",
   );
 });
-server.on("error", (error) => {
+server.onError((error) => {
   console.error("[voice-gateway] failed to start:", error.message);
   process.exit(1);
 });

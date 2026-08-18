@@ -11,7 +11,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { IncomingMessage } from "node:http";
+import { createServer, type IncomingMessage } from "node:http";
 
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 
@@ -95,11 +95,39 @@ const MAX_CALL_DURATION_MS = 30 * 60 * 1_000;
  */
 const MAX_PHONE_FIELD_CHARS = 64;
 
+/**
+ * Where a plain HTTP GET gets a 200 instead of a "this is a WebSocket" refusal.
+ *
+ * Hosting platforms decide whether a container is alive by making an ordinary
+ * request to it, so the gateway has to answer one. Without this the process
+ * listens for upgrades only, every probe fails, and the deploy is rolled back
+ * while the logs cheerfully report that the gateway started.
+ */
+export const HEALTH_PATH = "/health";
+
 export interface VoiceGatewayOptions {
   port: number;
   path?: string;
   /** Injected so the entry point owns all console output. */
   log?: (message: string, meta?: Record<string, unknown>) => void;
+}
+
+/**
+ * The running gateway: one HTTP server that answers health checks and hands
+ * upgrades on `path` to `ws`.
+ *
+ * Narrower than the `WebSocketServer` it wraps, because the entry point only
+ * ever needs to know when the port opened, which calls are live, and how to
+ * shut both layers down together.
+ */
+export interface VoiceGateway {
+  /** The live calls, for shutdown and for the health payload. */
+  readonly clients: Set<WebSocket>;
+  /** Fires once the port is actually open — the point at which probes pass. */
+  onListening(handler: () => void): void;
+  onError(handler: (error: Error) => void): void;
+  /** Closes the WebSocket layer and then the HTTP server underneath it. */
+  close(done: () => void): void;
 }
 
 interface CallState {
@@ -235,12 +263,30 @@ function endedByFor(reason: string): CallRecord["endedBy"] {
   return "error";
 }
 
-export function startVoiceGateway(options: VoiceGatewayOptions): WebSocketServer {
+export function startVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
   const path = options.path ?? "/voice";
   const log = options.log ?? (() => undefined);
 
+  // Owned here rather than left to `ws`, which would create a hidden one that
+  // answers every plain request with 426 — including the platform's health
+  // check. `wss` is attached to it below.
+  const http = createServer((request, response) => {
+    const pathname = (request.url ?? "/").split("?")[0];
+    if (request.method === "GET" && (pathname === HEALTH_PATH || pathname === "/")) {
+      const body = JSON.stringify({ status: "ok", calls: wss.clients.size, voicePath: path });
+      response.writeHead(200, {
+        "content-type": "application/json",
+        "content-length": Buffer.byteLength(body),
+      });
+      response.end(body);
+      return;
+    }
+    response.writeHead(426, { "content-type": "text/plain" });
+    response.end(`This port speaks WebSocket. Connect to ${path}.\n`);
+  });
+
   const wss = new WebSocketServer({
-    port: options.port,
+    server: http,
     path,
     maxPayload: MAX_CLIENT_FRAME_BYTES,
     // Runs during the HTTP upgrade: `ws` answers a refusal with a plain HTTP
@@ -291,7 +337,21 @@ export function startVoiceGateway(options: VoiceGatewayOptions): WebSocketServer
 
   wss.on("close", () => clearInterval(heartbeat));
 
-  return wss;
+  // No host argument: bind every interface, because a container's health check
+  // arrives from outside it and would never reach a loopback-only listener.
+  http.listen(options.port);
+
+  return {
+    clients: wss.clients,
+    onListening: (handler) => http.on("listening", handler),
+    onError: (handler) => http.on("error", handler),
+    close: (done) => {
+      // The WebSocket layer first, so live calls are closed before the port
+      // goes away; the HTTP server is what actually holds the port open, so
+      // `wss.close` alone would leave the process running.
+      wss.close(() => http.close(() => done()));
+    },
+  };
 }
 
 const callStates = new WeakMap<WebSocket, CallState>();

@@ -21,7 +21,7 @@ npm run dev                    # starts BOTH the web app and the voice gateway
 ```
 
 - Web app → <http://localhost:3000>
-- Voice gateway → `ws://localhost:4000/voice`
+- Voice gateway → `ws://localhost:4000/voice` (health check at <http://localhost:4000/health>)
 
 Click **Start Conversation**, allow the microphone, and talk.
 
