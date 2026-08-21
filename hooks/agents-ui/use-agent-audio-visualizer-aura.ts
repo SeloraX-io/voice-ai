@@ -24,7 +24,7 @@ const DEFAULT_SCALE = 0.2;
 const DEFAULT_BRIGHTNESS = 1.5;
 const DEFAULT_TRANSITION: ValueAnimationTransition = { duration: 0.5, ease: 'easeOut' };
 const DEFAULT_PULSE_TRANSITION: ValueAnimationTransition = {
-  duration: 0.35,
+  duration: 0.8,
   ease: 'easeOut',
   repeat: Infinity,
   repeatType: 'mirror',
@@ -76,26 +76,26 @@ export function useAgentAudioVisualizerAura(state: AgentState | undefined, volum
         return;
       case 'listening':
       case 'pre-connect-buffering':
-        setSpeed(20);
-        animateScale(0.3, { type: 'spring', duration: 1.0, bounce: 0.35 });
+        setSpeed(12);
+        animateScale(0.3, { type: 'spring', duration: 1.2, bounce: 0.2 });
         animateAmplitude(1.0, DEFAULT_TRANSITION);
-        animateFrequency(0.7, DEFAULT_TRANSITION);
+        animateFrequency(0.55, DEFAULT_TRANSITION);
         animateBrightness([1.5, 2.0], DEFAULT_PULSE_TRANSITION);
         return;
       case 'thinking':
       case 'connecting':
       case 'initializing':
-        setSpeed(30);
+        setSpeed(18);
         animateScale(0.3, DEFAULT_TRANSITION);
         animateAmplitude(0.5, DEFAULT_TRANSITION);
         animateFrequency(1, DEFAULT_TRANSITION);
         animateBrightness([0.5, 2.5], DEFAULT_PULSE_TRANSITION);
         return;
       case 'speaking':
-        setSpeed(70);
+        setSpeed(24);
         animateScale(0.3, DEFAULT_TRANSITION);
         animateAmplitude(0.75, DEFAULT_TRANSITION);
-        animateFrequency(1.25, DEFAULT_TRANSITION);
+        animateFrequency(0.8, DEFAULT_TRANSITION);
         animateBrightness(1.5, DEFAULT_TRANSITION);
         return;
     }
@@ -103,7 +103,7 @@ export function useAgentAudioVisualizerAura(state: AgentState | undefined, volum
 
   useEffect(() => {
     if (state === 'speaking' && resolvedVolume > 0 && !scaleMotionValue.isAnimating()) {
-      animateScale(0.2 + 0.2 * resolvedVolume, { duration: 0 });
+      animateScale(0.2 + 0.2 * resolvedVolume, { duration: 0.18, ease: 'easeOut' });
     }
   }, [
     state,

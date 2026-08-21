@@ -11,8 +11,8 @@
  * preview player — so audio capture, playout, barge-in and the gateway protocol
  * are the ones already in service, not a second implementation that can drift.
  *
- * Two states: a closed pill and an open call panel. The parent frame is sized to
- * whichever is showing, via postMessage, because an iframe cannot resize itself.
+ * Compact, call-panel and full-view states are reflected to the parent through
+ * postMessage, because an iframe cannot resize itself.
  *
  * Styling is a <style> block rather than Tailwind classes: it keeps the whole
  * widget legible as one visual object, and it renders correctly even if the
@@ -20,12 +20,16 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import Image from "next/image";
 
 import { VoiceAura } from "@/components/embed/VoiceAura";
 import { useVoiceSession } from "@/hooks/useVoiceSession";
+import { DEFAULT_EMBED_TEXT, parseEmbedTextConfig } from "@/lib/embed/config";
 
 /** Matches the constants in public/embed.js. Both sides must agree. */
 const MESSAGE_SOURCE = "voice-ai-widget";
+const SELORAX_LOGO_URL = "/SeloraX%20Logo.svg";
+const END_BRAND_MS = 5_200;
 
 /**
  * Tells the loader to grow or shrink.
@@ -42,32 +46,68 @@ function postToParent(message: Record<string, unknown>): void {
 
 export default function EmbedWidgetPage() {
   const voice = useVoiceSession();
-  const [open, setOpen] = useState(false);
-  const { status, error, start, stop, muted, toggleMute, levels } = voice;
+  const [view, setView] = useState<"compact" | "panel" | "full">("compact");
+  const [dismissedEndedAt, setDismissedEndedAt] = useState<number | null>(null);
+  const [text] = useState(() =>
+    typeof window === "undefined" ? DEFAULT_EMBED_TEXT : parseEmbedTextConfig(window.location.search),
+  );
+  const [mobileCompact] = useState(() =>
+    typeof window === "undefined"
+      ? false
+      : new URLSearchParams(window.location.search).get("mobile") === "1",
+  );
+  const { status, error, endedAt, start, stop, muted, toggleMute, levels } = voice;
 
   useEffect(() => {
-    postToParent({ type: "resize", open });
-  }, [open]);
+    postToParent({ type: "resize", view });
+  }, [view]);
+
+  useEffect(() => {
+    const receiveCommand = (event: MessageEvent) => {
+      if (event.source !== window.parent) return;
+      const message = event.data as { source?: unknown; type?: unknown } | null;
+      if (message?.source !== "voice-ai-host") return;
+      if (message.type === "open") setView("full");
+      if (message.type === "minimize") {
+        setView(status !== "idle" && status !== "error" ? "panel" : "compact");
+      }
+      if (message.type === "stop") {
+        setView((current) => (current === "full" ? "full" : "panel"));
+        void stop();
+      }
+    };
+    window.addEventListener("message", receiveCommand);
+    return () => window.removeEventListener("message", receiveCommand);
+  }, [status, stop]);
+
+  const live = status !== "idle" && status !== "error";
+  const ended = endedAt !== null && endedAt !== dismissedEndedAt;
+
+  useEffect(() => {
+    if (!ended) return;
+    const timer = setTimeout(() => {
+      setDismissedEndedAt(endedAt);
+      setView("compact");
+    }, END_BRAND_MS);
+    return () => clearTimeout(timer);
+  }, [ended, endedAt]);
 
   const openAndStart = useCallback(async () => {
-    setOpen(true);
+    setView(view === "full" ? "full" : "panel");
     // Called straight from the click, so the browser still counts this as a
     // user gesture — getUserMedia and AudioContext both require one.
     await start();
-  }, [start]);
+  }, [start, view]);
 
   const endCall = useCallback(async () => {
     await stop();
-    setOpen(false);
   }, [stop]);
-
-  const live = status !== "idle" && status !== "error";
 
   return (
     <>
       <style>{STYLES}</style>
-      <div className="vw-root">
-        {open ? (
+      <div className={`vw-root${view === "full" ? " vw-root-full" : ""}`}>
+        {view !== "compact" ? (
           <CallPanel
             status={status}
             error={error}
@@ -76,9 +116,19 @@ export default function EmbedWidgetPage() {
             onEnd={endCall}
             levels={levels}
             live={live}
+            text={text}
+            full={view === "full"}
+            onStart={openAndStart}
+            onMinimize={() => setView(live ? "panel" : "compact")}
+            ended={ended}
           />
         ) : (
-          <Pill onStart={openAndStart} />
+          <Pill
+            onStart={openAndStart}
+            prompt={text.prompt}
+            buttonText={text.buttonText}
+            mobile={mobileCompact}
+          />
         )}
       </div>
     </>
@@ -86,16 +136,39 @@ export default function EmbedWidgetPage() {
 }
 
 /** The closed state: the ring, a question, and the call button. */
-function Pill({ onStart }: { onStart: () => void }) {
+function Pill({
+  onStart,
+  prompt,
+  buttonText,
+  mobile,
+}: {
+  onStart: () => void;
+  prompt: string;
+  buttonText: string;
+  mobile: boolean;
+}) {
+  if (mobile) {
+    return (
+      <button
+        type="button"
+        onClick={onStart}
+        className="vw-mobile-launch"
+        aria-label={buttonText}
+      >
+        <VoiceAura size={50} idle themeMode="light" />
+      </button>
+    );
+  }
+
   return (
     <div className="vw-card vw-enter">
       <div className="vw-pill-head">
         <VoiceAura size={44} idle themeMode="light" />
-        <p className="vw-pill-title">সাহায্য দরকার?</p>
+        <p className="vw-pill-title">{prompt}</p>
       </div>
       <button type="button" onClick={onStart} className="vw-btn vw-btn-primary">
         <PhoneIcon />
-        কল শুরু করুন
+        {buttonText}
       </button>
     </div>
   );
@@ -109,6 +182,11 @@ function CallPanel({
   onEnd,
   levels,
   live,
+  text,
+  full,
+  onStart,
+  onMinimize,
+  ended,
 }: {
   status: string;
   error: string | null;
@@ -117,37 +195,90 @@ function CallPanel({
   onEnd: () => void;
   levels: React.RefObject<{ user: number; agent: number }>;
   live: boolean;
+  text: typeof DEFAULT_EMBED_TEXT;
+  full: boolean;
+  onStart: () => void;
+  onMinimize: () => void;
+  ended: boolean;
 }) {
   return (
-    <div className="vw-card vw-card-open vw-enter">
+    <div className={`vw-card vw-card-open vw-enter${full ? " vw-card-full" : ""}`}>
       <header className="vw-head">
-        <p className="vw-head-title">ভয়েস সহকারী</p>
+        <p className="vw-head-title">{text.title}</p>
         <p className="vw-head-status">
           <span className={`vw-dot${status === "connecting" ? " vw-dot-pulse" : ""}`} />
-          {statusLabel(status)}
+          {ended ? "কল শেষ হয়েছে" : statusLabel(status)}
         </p>
       </header>
 
+      {full && (
+        <button
+          type="button"
+          className="vw-minimize"
+          onClick={onMinimize}
+          aria-label="Minimize widget"
+        >
+          <MinimizeIcon />
+        </button>
+      )}
+
       <div className="vw-stage">
-        <VoiceAura size={150} status={status} level={levels} idle={!live || muted} />
+        {ended ? (
+          <EndBrand />
+        ) : (
+          <VoiceAura size={150} status={status} level={levels} idle={!live || muted} />
+        )}
       </div>
 
       {error && <p className="vw-error">{error}</p>}
 
-      <div className="vw-controls">
-        <button
-          type="button"
-          onClick={onToggleMute}
-          aria-pressed={muted}
-          className={`vw-btn vw-btn-ghost${muted ? " vw-btn-active" : ""}`}
-        >
-          {muted ? <MicOffIcon /> : <MicIcon />}
-          {muted ? "আনমিউট" : "মিউট"}
+      {ended ? null : !live && !error ? (
+        <button type="button" onClick={onStart} className="vw-btn vw-btn-primary">
+          <PhoneIcon />
+          {text.buttonText}
         </button>
-        <button type="button" onClick={onEnd} className="vw-btn vw-btn-end" aria-label="কল শেষ করুন">
-          <HangUpIcon />
-        </button>
-      </div>
+      ) : (
+        <div className="vw-controls">
+          <button
+            type="button"
+            onClick={onToggleMute}
+            aria-pressed={muted}
+            className={`vw-btn vw-btn-ghost${muted ? " vw-btn-active" : ""}`}
+          >
+            {muted ? <MicOffIcon /> : <MicIcon />}
+            {muted ? "আনমিউট" : "মিউট"}
+          </button>
+          <button
+            type="button"
+            onClick={onEnd}
+            className="vw-btn vw-btn-end"
+            aria-label="কল শেষ করুন"
+          >
+            <HangUpIcon />
+          </button>
+        </div>
+      )}
+
+      {!ended && <PoweredBy />}
+    </div>
+  );
+}
+
+function PoweredBy() {
+  return (
+    <div className="vw-powered" aria-label="Powered by SeloraX">
+      <span>Powered by</span>
+      <Image src={SELORAX_LOGO_URL} alt="SeloraX" width={1918} height={407} unoptimized />
+    </div>
+  );
+}
+
+function EndBrand() {
+  return (
+    <div className="vw-end-brand" role="status" aria-label="Call ended. Powered by SeloraX">
+      <span className="vw-end-orbit" aria-hidden />
+      <p>Powered by</p>
+      <Image src={SELORAX_LOGO_URL} alt="SeloraX" width={1918} height={407} unoptimized />
     </div>
   );
 }
@@ -204,6 +335,22 @@ function MicOffIcon() {
   );
 }
 
+function MinimizeIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      aria-hidden
+    >
+      <path d="M5 12h14" />
+    </svg>
+  );
+}
+
 /**
  * The widget's entire visual definition.
  *
@@ -234,6 +381,13 @@ const STYLES = `
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
+.vw-root-full {
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(8, 10, 14, 0.52);
+  backdrop-filter: blur(8px);
+}
 
 @media (prefers-color-scheme: dark) {
   .vw-root {
@@ -259,6 +413,41 @@ const STYLES = `
   color: var(--vw-text);
 }
 .vw-card-open { height: 100%; display: flex; flex-direction: column; }
+.vw-card-full {
+  position: relative;
+  width: min(420px, 100%);
+  height: min(560px, 100%);
+  padding: 18px;
+  border-radius: 24px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+}
+.vw-minimize {
+  position: absolute; top: 12px; right: 12px;
+  display: grid; place-items: center; width: 30px; height: 30px;
+  border: 1px solid var(--vw-ghost-border); border-radius: 999px;
+  background: var(--vw-card); color: var(--vw-text); cursor: pointer;
+}
+.vw-card-full .vw-head { padding-right: 38px; }
+
+.vw-mobile-launch {
+  position: relative; display: grid; place-items: center;
+  width: 66px; height: 66px; padding: 0;
+  border: 1px solid rgba(255, 129, 35, 0.32); border-radius: 50%;
+  background: #0b0b0d; color: #ffffff; cursor: pointer;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.24), 0 0 0 0 rgba(255, 129, 35, 0.32);
+  animation: vw-in 220ms cubic-bezier(0.22, 1, 0.36, 1),
+             vw-mobile-glow 2.4s 300ms ease-in-out infinite;
+}
+.vw-mobile-launch::before {
+  content: ""; position: absolute; inset: 5px; border-radius: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.09); pointer-events: none;
+}
+.vw-mobile-launch:focus-visible { outline: 2px solid #ff8123; outline-offset: 3px; }
+.vw-mobile-launch:active { transform: scale(0.96); }
+@keyframes vw-mobile-glow {
+  0%, 100% { box-shadow: 0 8px 28px rgba(0, 0, 0, 0.24), 0 0 0 0 rgba(255, 129, 35, 0.28); }
+  50% { box-shadow: 0 10px 32px rgba(0, 0, 0, 0.28), 0 0 0 8px rgba(255, 129, 35, 0); }
+}
 
 /* A short rise, not a bounce: the widget should feel placed, not thrown. */
 .vw-enter { animation: vw-in 220ms cubic-bezier(0.22, 1, 0.36, 1); }
@@ -284,6 +473,65 @@ const STYLES = `
 @keyframes vw-blink { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
 
 .vw-stage { flex: 1; display: grid; place-items: center; min-height: 0; }
+
+.vw-powered {
+  align-self: center; display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 9px; padding: 5px 8px; border-radius: 999px;
+  background: #0b0b0d; color: #a1a1aa;
+  font-size: 8px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.vw-powered img { display: block; width: 62px; height: auto; }
+
+.vw-end-brand {
+  position: relative; isolation: isolate; overflow: hidden;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  width: 100%; min-height: 150px; padding: 22px; box-sizing: border-box;
+  border: 1px solid rgba(255, 129, 35, 0.22); border-radius: 18px;
+  background: radial-gradient(circle at 50% 110%, rgba(255, 129, 35, 0.18), transparent 55%), #09090b;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.05);
+  animation: vw-brand-in 500ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.vw-end-brand::after {
+  content: ""; position: absolute; z-index: -1; inset: -70% -20%;
+  background: linear-gradient(100deg, transparent 35%, rgba(255, 255, 255, 0.09) 49%, transparent 63%);
+  animation: vw-brand-sweep 2.4s ease-in-out infinite;
+}
+.vw-end-brand p {
+  margin: 0 0 10px; color: #a1a1aa;
+  font-size: 10px; font-weight: 650; letter-spacing: 0.16em; text-transform: uppercase;
+  animation: vw-brand-copy 500ms 100ms ease-out both;
+}
+.vw-end-brand img {
+  display: block; width: min(190px, 82%); height: auto;
+  animation: vw-brand-logo 650ms 130ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.vw-end-orbit {
+  position: absolute; z-index: -1; width: 190px; height: 190px; border-radius: 50%;
+  border: 1px solid rgba(255, 129, 35, 0.16);
+  box-shadow: 0 0 50px rgba(255, 129, 35, 0.12);
+  animation: vw-brand-orbit 3.2s ease-in-out infinite;
+}
+@keyframes vw-brand-in {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes vw-brand-copy {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes vw-brand-logo {
+  from { opacity: 0; transform: translateY(10px) scale(0.9); filter: blur(5px); }
+  to { opacity: 1; transform: none; filter: blur(0); }
+}
+@keyframes vw-brand-sweep {
+  0%, 30% { transform: translateX(-35%) rotate(8deg); opacity: 0; }
+  50% { opacity: 1; }
+  75%, 100% { transform: translateX(35%) rotate(8deg); opacity: 0; }
+}
+@keyframes vw-brand-orbit {
+  0%, 100% { transform: scale(0.82); opacity: 0.35; }
+  50% { transform: scale(1); opacity: 0.8; }
+}
 
 .vw-controls { display: flex; gap: 7px; }
 
@@ -330,7 +578,9 @@ const STYLES = `
 /* Motion here decorates a state the text already conveys, so it drops safely.
    The ring stills itself — see VoiceRing. */
 @media (prefers-reduced-motion: reduce) {
-  .vw-enter, .vw-dot-pulse { animation: none !important; }
+  .vw-enter, .vw-dot-pulse, .vw-end-brand, .vw-end-brand::after,
+  .vw-end-brand p, .vw-end-brand img, .vw-end-orbit,
+  .vw-mobile-launch { animation: none !important; }
   .vw-btn { transition: none; }
 }
 `;
