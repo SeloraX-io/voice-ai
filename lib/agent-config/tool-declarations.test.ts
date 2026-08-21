@@ -54,6 +54,38 @@ test("builds a parameter schema, marking only the required ones", () => {
   });
 });
 
+test("declares a json parameter as a string, with an instruction to output valid JSON", () => {
+  const declared = toolDeclarations(
+    tools({
+      http: [
+        httpTool({
+          parameters: [
+            {
+              id: "p1",
+              name: "address",
+              type: "json",
+              description: "The delivery address.",
+              required: true,
+            },
+          ],
+        }),
+      ],
+    }),
+    { canEndCall: false },
+  );
+
+  assert.deepEqual(declared[0].parameters, {
+    type: "OBJECT",
+    properties: {
+      address: {
+        type: "STRING",
+        description: "The delivery address. Respond with a valid JSON object string.",
+      },
+    },
+    required: ["address"],
+  });
+});
+
 test("omits the schema entirely for a tool with no parameters", () => {
   const declared = toolDeclarations(tools({ http: [httpTool()] }), { canEndCall: false });
   assert.equal(declared[0].parameters, undefined);

@@ -11,6 +11,8 @@
  * response that never arrives, which is worse than telling it the lookup failed.
  */
 
+import { appendFileSync } from "node:fs";
+
 import { bracedParams, type HttpTool } from "../../lib/agent-config/tools";
 
 /** Beyond this a caller is left waiting; better to fail and let the agent say so. */
@@ -35,6 +37,49 @@ function resolveSecretRefs(value: string, secrets: Record<string, string>): stri
   return value.replace(SECRET_RE, (whole, name: string) => secrets[name] ?? whole);
 }
 
+/**
+ * Turns a json-typed argument's string value into a real object.
+ *
+ * The model can only emit text, so a `json`-typed parameter is declared to it
+ * as a string (see tool-declarations.ts) and arrives here the same way. This
+ * is the one place that gap is closed, before the value is ever placed in a
+ * URL or serialized into the body — everything downstream treats args as
+ * already being whatever shape they claim to be.
+ */
+function parseJsonArgs(
+  tool: HttpTool,
+  args: Record<string, unknown>,
+): { ok: true; args: Record<string, unknown> } | { ok: false; error: string } {
+  const jsonParamNames = tool.parameters
+    .filter((parameter) => parameter.type === "json")
+    .map((parameter) => parameter.name);
+  if (jsonParamNames.length === 0) return { ok: true, args };
+
+  const parsed = { ...args };
+  for (const name of jsonParamNames) {
+    const value = parsed[name];
+    if (typeof value !== "string") continue;
+    try {
+      parsed[name] = JSON.parse(value);
+    } catch {
+      // TEMP DEBUG — remove after diagnosing the place_order json-arg failures.
+      try {
+        appendFileSync(
+          "/private/tmp/claude-501/-Volumes-work-selorax/d21e441a-5708-4af3-a000-0ed560a4a5a7/scratchpad/json-debug.log",
+          `${new Date().toISOString()} tool=${tool.name} param=${name} raw=${JSON.stringify(value)}\n`,
+        );
+      } catch {
+        // best effort
+      }
+      return {
+        ok: false,
+        error: `The "${name}" value was not valid JSON. Try again with a valid JSON object string.`,
+      };
+    }
+  }
+  return { ok: true, args: parsed };
+}
+
 /** Fills `{brace}` segments in the URL from the model's arguments. */
 function fillPath(url: string, args: Record<string, unknown>): string {
   let filled = url;
@@ -57,9 +102,13 @@ function remainingArgs(
 
 export async function executeHttpTool(
   tool: HttpTool,
-  args: Record<string, unknown>,
+  rawArgs: Record<string, unknown>,
   secrets: Record<string, string>,
 ): Promise<ToolResult> {
+  const parsedJson = parseJsonArgs(tool, rawArgs);
+  if (!parsedJson.ok) return { ok: false, error: parsedJson.error };
+  const args = parsedJson.args;
+
   const target = fillPath(tool.url, args);
   const rest = remainingArgs(tool.url, args);
 

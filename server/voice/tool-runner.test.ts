@@ -100,6 +100,55 @@ test("sends leftover arguments as a JSON body on a POST", async () => {
   );
 });
 
+test("parses a json-typed argument into a nested object in the body", async () => {
+  await withServer(
+    () => ({}),
+    async (base, seen) => {
+      await executeHttpTool(
+        tool({
+          method: "POST",
+          url: `${base}/orders`,
+          parameters: [
+            { id: "p1", name: "address", type: "json", description: "The address.", required: true },
+          ],
+        }),
+        { address: '{"address":"12 Road, Dhaka"}', customer_name: "Jane" },
+        {},
+      );
+      assert.deepEqual(JSON.parse(seen().body), {
+        address: { address: "12 Road, Dhaka" },
+        customer_name: "Jane",
+      });
+    },
+  );
+});
+
+test("returns a readable error for invalid JSON in a json-typed argument, without calling the endpoint", async () => {
+  let called = false;
+  await withServer(
+    () => {
+      called = true;
+      return {};
+    },
+    async (base) => {
+      const result = await executeHttpTool(
+        tool({
+          method: "POST",
+          url: `${base}/orders`,
+          parameters: [
+            { id: "p1", name: "address", type: "json", description: "The address.", required: true },
+          ],
+        }),
+        { address: "{not valid json" },
+        {},
+      );
+      assert.equal(result.ok, false);
+      assert.equal(typeof result.error, "string");
+      assert.equal(called, false);
+    },
+  );
+});
+
 test("resolves a secret reference into the header actually sent", async () => {
   await withServer(
     () => ({}),

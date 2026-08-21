@@ -16,7 +16,7 @@ import {
   type FieldError,
 } from "./validate-helpers";
 
-export type ToolValueType = "string" | "number" | "boolean";
+export type ToolValueType = "string" | "number" | "boolean" | "json";
 export type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
 export type WebhookEvent = "call_started" | "call_ended" | "transcript_ready";
 export type RetryPolicy = "none" | "once" | "backoff";
@@ -28,7 +28,7 @@ export const WEBHOOK_EVENTS: readonly WebhookEvent[] = [
   "transcript_ready",
 ];
 export const RETRY_POLICIES: readonly RetryPolicy[] = ["none", "once", "backoff"];
-const VALUE_TYPES: readonly ToolValueType[] = ["string", "number", "boolean"];
+const VALUE_TYPES: readonly ToolValueType[] = ["string", "number", "boolean", "json"];
 
 /** Lowercase snake case, because these become function names the model calls. */
 export const TOOL_NAME_RE = /^[a-z][a-z0-9_]*$/;

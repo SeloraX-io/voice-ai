@@ -60,7 +60,21 @@ const PARAM_TYPE: Record<ToolParameter["type"], JsonSchema["type"]> = {
   string: "STRING",
   number: "NUMBER",
   boolean: "BOOLEAN",
+  // The model still produces text; the gateway parses that text into a real
+  // object before the request is sent. See tool-runner.ts.
+  json: "STRING",
 };
+
+/**
+ * A json-typed parameter needs the model to actually emit valid JSON, which
+ * its declared description does not otherwise say. Appended rather than left
+ * to the tool author to remember, so a forgotten instruction cannot turn into
+ * a parse failure the model has no way to explain to the caller.
+ */
+function describeParameter(parameter: ToolParameter): string {
+  if (parameter.type !== "json") return parameter.description;
+  return `${parameter.description} Respond with a valid JSON object string.`;
+}
 
 function parametersSchema(parameters: ToolParameter[]): JsonSchema | undefined {
   const named = parameters.filter((parameter) => parameter.name !== "");
@@ -70,7 +84,7 @@ function parametersSchema(parameters: ToolParameter[]): JsonSchema | undefined {
   for (const parameter of named) {
     properties[parameter.name] = {
       type: PARAM_TYPE[parameter.type],
-      description: parameter.description,
+      description: describeParameter(parameter),
     };
   }
 

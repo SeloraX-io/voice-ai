@@ -84,6 +84,7 @@ export function ParameterRows({
                   <option value="string">String</option>
                   <option value="number">Number</option>
                   <option value="boolean">Boolean</option>
+                  <option value="json">JSON</option>
                 </Select>
                 <Input
                   aria-label="What this value is"
