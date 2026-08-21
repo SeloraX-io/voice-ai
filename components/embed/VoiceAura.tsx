@@ -54,13 +54,15 @@ const INPUT_CURVE = 0.62;
 /**
  * How often the audio level is pushed into React state.
  *
- * Every push re-renders this subtree, so it cannot run at frame rate. 25Hz is
- * fast enough that the aura tracks speech — syllables land around 4-8Hz — and
- * slow enough to cost a fraction of the renders a per-frame update would.
+ * Every push re-renders this subtree, so it cannot run at frame rate. 15Hz and
+ * a soft attack/release keep speech expressive without making the logo twitch
+ * on every syllable.
  * The shader animates continuously on its own clock regardless; this only
  * controls how often its amplitude is corrected.
  */
-const SAMPLE_HZ = 25;
+const SAMPLE_HZ = 15;
+const ATTACK = 0.24;
+const RELEASE = 0.12;
 
 /** Our session statuses do not line up one-to-one with the aura's states. */
 function toAgentState(status: string | undefined, idle: boolean): AgentState {
@@ -95,6 +97,7 @@ export function VoiceAura({
   // Held in a ref as well so the interval can compare against the last value
   // without re-subscribing every time it changes.
   const lastRef = useRef(0);
+  const smoothedRef = useRef(0);
 
   useEffect(() => {
     // No synchronous setState on the idle path: the effect only subscribes, and
@@ -102,12 +105,16 @@ export function VoiceAura({
     // Setting state here would queue a second render every time `idle` flipped.
     if (idle || !level) {
       lastRef.current = 0;
+      smoothedRef.current = 0;
       return;
     }
     const id = window.setInterval(() => {
       const current = level.current;
       const raw = current ? Math.max(current.user, current.agent) : 0;
-      const shaped = Math.min(1, Math.pow(Math.max(raw, 0) * INPUT_GAIN, INPUT_CURVE));
+      const target = Math.min(1, Math.pow(Math.max(raw, 0) * INPUT_GAIN, INPUT_CURVE));
+      const response = target > smoothedRef.current ? ATTACK : RELEASE;
+      const shaped = smoothedRef.current + (target - smoothedRef.current) * response;
+      smoothedRef.current = shaped;
       // Only re-render on a change big enough to see. Without this the aura
       // re-renders 25 times a second through every silence, for nothing.
       if (Math.abs(shaped - lastRef.current) > 0.02) {

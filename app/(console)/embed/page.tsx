@@ -79,6 +79,53 @@ export default function EmbedPage() {
           </section>
 
           <section className="mt-8">
+            <h2 className="text-sm font-semibold text-[var(--text)]">Customize the text</h2>
+            <p className="mt-2 text-sm leading-relaxed text-[var(--text-muted)]">
+              Add any of these optional attributes to the loader script. Omitted values keep the
+              current defaults.
+            </p>
+            <pre className="mt-3 overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--surface-3)] p-3.5 text-[13px] leading-relaxed text-[var(--text)]">
+              <code>{`<script
+  src="${result.origin}/embed.js"
+  async
+  data-prompt="Need help?"
+  data-button-text="Talk to Colleen"
+  data-title="Colleen"
+></script>`}</code>
+            </pre>
+            <div className="mt-3 grid gap-2 text-sm text-[var(--text-muted)] sm:grid-cols-3">
+              <p><code className="text-[var(--text)]">data-prompt</code><br />Compact prompt</p>
+              <p><code className="text-[var(--text)]">data-button-text</code><br />Call button label</p>
+              <p><code className="text-[var(--text)]">data-title</code><br />Expanded panel title</p>
+            </div>
+          </section>
+
+          <section className="mt-8">
+            <h2 className="text-sm font-semibold text-[var(--text)]">Control it from your page</h2>
+            <p className="mt-2 text-sm leading-relaxed text-[var(--text-muted)]">
+              Once <code className="text-[var(--text)]">embed.js</code> has loaded, it exposes the
+              following methods on <code className="text-[var(--text)]">window.SeloraXAI</code>.
+              This lets an ordinary site button open Colleen in full view.
+            </p>
+            <pre className="mt-3 overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--surface-3)] p-3.5 text-[13px] leading-relaxed text-[var(--text)]">
+              <code>{`document.querySelector("#talk-to-us").addEventListener("click", () => {
+  window.SeloraXAI.open();
+});
+
+// Other controls
+window.SeloraXAI.minimize(); // Exit full view without ending an active call
+window.SeloraXAI.stop();     // End the call and return to the small widget
+window.SeloraXAI.close();    // Remove the widget from the page`}</code>
+            </pre>
+            <p className="mt-3 text-xs leading-relaxed text-[var(--text-dim)]">
+              The script also fires <code>selorax-ai-ready</code> on <code>window</code> when the API
+              is ready. Calling <code>open()</code> after <code>close()</code> mounts the widget again.
+              Opening the interface does not request microphone access; the visitor still starts
+              the call from inside the widget.
+            </p>
+          </section>
+
+          <section className="mt-8">
             <h2 className="text-sm font-semibold text-[var(--text)]">When it will not work</h2>
             <ul className="mt-2 space-y-2 text-sm leading-relaxed text-[var(--text-muted)]">
               <li>

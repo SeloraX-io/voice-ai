@@ -34,6 +34,8 @@ export interface VoiceLevels {
 export interface VoiceSessionController {
   status: VoiceStatus;
   error: string | null;
+  /** Timestamp of the latest successfully torn-down call; null before/while a call runs. */
+  endedAt: number | null;
   session: SessionInfo | null;
   transcript: TranscriptEntry[];
   metrics: CallMetrics;
@@ -75,6 +77,7 @@ const nextEntryId = () => `entry-${++entrySeq}`;
 export function useVoiceSession(): VoiceSessionController {
   const [status, setStatus] = useState<VoiceStatus>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [endedAt, setEndedAt] = useState<number | null>(null);
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [metrics, setMetrics] = useState<CallMetrics>(EMPTY_METRICS);
@@ -188,6 +191,7 @@ export function useVoiceSession(): VoiceSessionController {
   const stop = useCallback(async () => {
     if (busyRef.current) return;
     busyRef.current = true;
+    const hadCall = micRef.current !== null || clientRef.current !== null;
     try {
       finaliseTranscript();
       await teardown();
@@ -195,6 +199,7 @@ export function useVoiceSession(): VoiceSessionController {
       setStatus("idle");
       setSession(null);
       setMuted(false);
+      if (hadCall) setEndedAt(Date.now());
     } finally {
       busyRef.current = false;
     }
@@ -376,6 +381,7 @@ export function useVoiceSession(): VoiceSessionController {
 
     startedAtRef.current = performance.now();
     setError(null);
+    setEndedAt(null);
     setStatus("connecting");
     setMetrics({ ...EMPTY_METRICS });
     setUsage(null);
@@ -430,7 +436,10 @@ export function useVoiceSession(): VoiceSessionController {
       const client = new VoiceClient(resolveGatewayUrl(), {
         onMessage: handleServerMessage,
         onClose: ({ clean, reason }) => {
-          if (clean) return;
+          if (clean) {
+            void stop();
+            return;
+          }
           void failWith(
             reason || "The connection to the voice gateway was lost. Start a new call to retry.",
           );
@@ -457,7 +466,7 @@ export function useVoiceSession(): VoiceSessionController {
     } finally {
       busyRef.current = false;
     }
-  }, [failWith, handleServerMessage, patchMetrics]);
+  }, [failWith, handleServerMessage, patchMetrics, stop]);
 
   /* ---------------------------------------------------------------------- */
 
@@ -500,6 +509,7 @@ export function useVoiceSession(): VoiceSessionController {
   return {
     status,
     error,
+    endedAt,
     session,
     transcript,
     metrics,

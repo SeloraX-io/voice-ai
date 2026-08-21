@@ -8,7 +8,7 @@
  * are built on the server, so this never has to know the origin rules.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
 
 export function EmbedSnippet({
@@ -83,6 +83,28 @@ function Block({ title, hint, code }: { title: string; hint: string; code: strin
  */
 function Preview({ origin }: { origin: string }) {
   const [live, setLive] = useState(false);
+  const [view, setView] = useState<"compact" | "panel" | "full">("compact");
+  const frameRef = useRef<HTMLIFrameElement>(null);
+
+  useEffect(() => {
+    const receiveResize = (event: MessageEvent) => {
+      if (event.origin !== origin || event.source !== frameRef.current?.contentWindow) return;
+      const message = event.data as { source?: unknown; type?: unknown; view?: unknown } | null;
+      if (message?.source !== "voice-ai-widget" || message.type !== "resize") return;
+      if (message.view === "compact" || message.view === "panel" || message.view === "full") {
+        setView(message.view);
+      }
+    };
+    window.addEventListener("message", receiveResize);
+    return () => window.removeEventListener("message", receiveResize);
+  }, [origin]);
+
+  const frameClass =
+    view === "full"
+      ? "absolute inset-0 h-full w-full"
+      : view === "panel"
+        ? "absolute bottom-2 right-2 h-[340px] w-[292px]"
+        : "absolute bottom-2 right-2 h-[124px] w-[262px]";
 
   return (
     <section>
@@ -104,13 +126,14 @@ function Preview({ origin }: { origin: string }) {
           </button>
         )}
       </div>
-      <div className="relative h-[280px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-2)]">
+      <div className="relative h-[400px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-2)]">
         {live ? (
           <iframe
+            ref={frameRef}
             src={`${origin}/embed/widget`}
             title="Widget preview"
             allow={`microphone ${origin}`}
-            className="absolute bottom-2 right-2 h-[124px] w-[262px] border-0 bg-transparent"
+            className={`${frameClass} border-0 bg-transparent transition-[width,height] duration-200`}
           />
         ) : (
           <p className="grid h-full place-items-center px-6 text-center text-sm text-[var(--text-dim)]">
