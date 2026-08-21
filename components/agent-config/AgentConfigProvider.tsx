@@ -23,6 +23,8 @@ export interface TabProps {
 type SaveState = "idle" | "saving" | "saved";
 
 export interface AgentConfigContextValue extends TabProps {
+  /** Whose configuration this is. Client-scoped fetches must carry it. */
+  clientId: string;
   dirty: boolean;
   formError: string | null;
   saveState: SaveState;
@@ -59,9 +61,16 @@ function stableStringify(value: unknown): string {
  * edits discarded — every time the user moved between screens.
  */
 export function AgentConfigProvider({
+  clientId,
   initialConfig,
   children,
 }: {
+  /**
+   * The client whose config is being edited. The layout keys this provider by
+   * it, so switching clients remounts with the new client's saved state
+   * rather than diffing one client's edits against another's baseline.
+   */
+  clientId: string;
   initialConfig: AgentConfig;
   children: React.ReactNode;
 }) {
@@ -111,7 +120,7 @@ export function AgentConfigProvider({
 
     let response: Response;
     try {
-      response = await fetch("/api/agent-config", {
+      response = await fetch(`/api/agent-config?client=${encodeURIComponent(clientId)}`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(config),
@@ -149,9 +158,10 @@ export function AgentConfigProvider({
     setConfig(next);
     setSaveState("saved");
     return next;
-  }, [config, router]);
+  }, [clientId, config, router]);
 
   const value: AgentConfigContextValue = {
+    clientId,
     config,
     update,
     setSecretKeys,

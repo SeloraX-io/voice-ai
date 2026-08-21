@@ -74,7 +74,11 @@ const EMPTY_TURN: TurnTimings = {
 let entrySeq = 0;
 const nextEntryId = () => `entry-${++entrySeq}`;
 
-export function useVoiceSession(): VoiceSessionController {
+export function useVoiceSession(options?: {
+  /** Which client's agent the gateway should load. Null/omitted = default. */
+  clientId?: string | null;
+}): VoiceSessionController {
+  const clientId = options?.clientId ?? null;
   const [status, setStatus] = useState<VoiceStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [endedAt, setEndedAt] = useState<number | null>(null);
@@ -433,7 +437,7 @@ export function useVoiceSession(): VoiceSessionController {
       patchMetrics({ micStartMs: performance.now() - micStartedAt });
 
       // 3. Persistent WebSocket to the gateway, which opens the Gemini session.
-      const client = new VoiceClient(resolveGatewayUrl(), {
+      const client = new VoiceClient(resolveGatewayUrl({ clientId }), {
         onMessage: handleServerMessage,
         onClose: ({ clean, reason }) => {
           if (clean) {
@@ -466,7 +470,7 @@ export function useVoiceSession(): VoiceSessionController {
     } finally {
       busyRef.current = false;
     }
-  }, [failWith, handleServerMessage, patchMetrics, stop]);
+  }, [clientId, failWith, handleServerMessage, patchMetrics, stop]);
 
   /* ---------------------------------------------------------------------- */
 

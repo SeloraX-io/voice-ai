@@ -19,6 +19,14 @@ test("the public loader forwards all documented text attributes", async () => {
   assert.match(source, /data-title/);
 });
 
+test("the public loader forwards the client id, shape-checked", async () => {
+  const source = await readFile(loaderPath, "utf8");
+  assert.match(source, /data-client/);
+  // The widget URL must only ever carry a slug-shaped client id.
+  assert.match(source, /params\.set\("client", client\)/);
+  assert.match(source, /\^\[a-z0-9\]\[a-z0-9-\]\{0,62\}\$/);
+});
+
 test("widget messages are bound to the iframe that the loader created", async () => {
   const source = await readFile(loaderPath, "utf8");
   assert.match(source, /event\.origin !== ORIGIN/);

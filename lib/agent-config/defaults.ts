@@ -33,7 +33,6 @@ Rules:
 - Never invent order details, customer records, tracking numbers, refund amounts or delivery dates. If you do not have the information, say you will look it up or ask the customer for it.
 - Use tools when tools are available.
 - Never read out lists, bullet points, markdown or URLs. Everything you say is spoken aloud.
-- Open the call with a short Bangla greeting and ask how you can help.
 
 You are a human-sounding support representative, not a chatbot. Do not mention that you are an AI model unless the customer asks directly.
 
@@ -52,9 +51,15 @@ export const DEFAULT_AGENT_CONFIG: AgentConfig = {
     enabled: true,
     policy: DEFAULT_END_CALL_POLICY,
   },
+  // The ONLY place the opening lives. The instructions above deliberately say
+  // nothing about opening the call: the model cannot speak first unless the
+  // gateway primes a greeting turn, and it only does that when this is
+  // enabled — an instruction to "open the call" with the welcome switched off
+  // would order behaviour the agent cannot perform, and with it switched on
+  // would compete with the exact greeting below. One directive, one source.
   welcome: {
-    enabled: false,
-    message: "",
+    enabled: true,
+    message: "হ্যালো, কাস্টমার সাপোর্টে কল করার জন্য ধন্যবাদ। আমি কীভাবে সাহায্য করতে পারি?",
     allowInterrupt: true,
   },
   models: {

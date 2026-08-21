@@ -159,3 +159,86 @@ test("listSecretKeys throws when the database is unreachable", async () => {
   const store = createConfigStore(unreachableDb(), () => {});
   await assert.rejects(() => store.listSecretKeys());
 });
+
+/* ------------------------------------------------------------------------- */
+/* Client scoping                                                            */
+/* ------------------------------------------------------------------------- */
+
+test("each client reads and writes its own config", async () => {
+  const store = createConfigStore(await freshDb());
+  await store.write({ ...DEFAULT_AGENT_CONFIG, agentName: "acme-agent" }, "acme");
+  await store.write({ ...DEFAULT_AGENT_CONFIG, agentName: "globex-agent" }, "globex");
+
+  assert.equal((await store.read("acme")).agentName, "acme-agent");
+  assert.equal((await store.read("globex")).agentName, "globex-agent");
+  // The default client is untouched by either write.
+  assert.equal((await store.read()).agentName, DEFAULT_AGENT_CONFIG.agentName);
+});
+
+test("a client with no config reads the seed defaults", async () => {
+  const store = createConfigStore(await freshDb());
+  assert.deepEqual(await store.read("brand-new"), DEFAULT_AGENT_CONFIG);
+});
+
+test("omitting the client id everywhere means the default client", async () => {
+  const store = createConfigStore(await freshDb());
+  await store.write({ ...DEFAULT_AGENT_CONFIG, agentName: "ada" });
+  assert.equal((await store.read("singleton")).agentName, "ada");
+});
+
+test("secrets are scoped to their client", async () => {
+  const store = createConfigStore(await freshDb());
+  await store.setSecret("API_KEY", "acme-value", "acme");
+  await store.setSecret("API_KEY", "globex-value", "globex");
+
+  assert.deepEqual(await store.resolveSecrets("acme"), { API_KEY: "acme-value" });
+  assert.deepEqual(await store.resolveSecrets("globex"), { API_KEY: "globex-value" });
+  assert.deepEqual(await store.resolveSecrets(), {});
+  assert.deepEqual(await store.listSecretKeys("acme"), ["API_KEY"]);
+});
+
+test("deleting one client's secret leaves another's alone", async () => {
+  const store = createConfigStore(await freshDb());
+  await store.setSecret("API_KEY", "a", "acme");
+  await store.setSecret("API_KEY", "b", "globex");
+  await store.deleteSecret("API_KEY", "acme");
+
+  assert.deepEqual(await store.listSecretKeys("acme"), []);
+  assert.deepEqual(await store.listSecretKeys("globex"), ["API_KEY"]);
+});
+
+test("legacy un-prefixed secrets belong to the default client", async () => {
+  const getDb = await freshDb();
+  const db = await getDb();
+  // Written by the single-tenant version: bare key, no clientId field.
+  await db.collection("agent_secrets").insertOne({ _id: "OLD_KEY", value: "old" } as never);
+
+  const store = createConfigStore(getDb);
+  assert.deepEqual(await store.resolveSecrets(), { OLD_KEY: "old" });
+  assert.deepEqual(await store.listSecretKeys(), ["OLD_KEY"]);
+  // ...and to nobody else.
+  assert.deepEqual(await store.resolveSecrets("acme"), {});
+});
+
+test("setting a legacy secret on the default client migrates it to the prefixed shape", async () => {
+  const getDb = await freshDb();
+  const db = await getDb();
+  await db.collection("agent_secrets").insertOne({ _id: "OLD_KEY", value: "old" } as never);
+
+  const store = createConfigStore(getDb);
+  await store.setSecret("OLD_KEY", "new");
+
+  assert.deepEqual(await store.resolveSecrets(), { OLD_KEY: "new" });
+  assert.deepEqual(await store.listSecretKeys(), ["OLD_KEY"]);
+  assert.equal(await db.collection("agent_secrets").countDocuments(), 1);
+});
+
+test("deleting a legacy secret on the default client removes the legacy document", async () => {
+  const getDb = await freshDb();
+  const db = await getDb();
+  await db.collection("agent_secrets").insertOne({ _id: "OLD_KEY", value: "old" } as never);
+
+  const store = createConfigStore(getDb);
+  await store.deleteSecret("OLD_KEY");
+  assert.deepEqual(await store.listSecretKeys(), []);
+});

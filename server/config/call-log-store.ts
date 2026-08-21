@@ -15,13 +15,18 @@
 import type { Db } from "mongodb";
 
 import type { CallRecord } from "../../lib/call-logs/types";
+import { DEFAULT_CLIENT_ID } from "../../lib/clients/types";
 import { getDb, type DbAccessor } from "../db/client";
 
 export type StoreLogger = (message: string) => void;
 
 export interface CallLogStore {
-  /** Newest first. */
-  read(): Promise<CallRecord[]>;
+  /**
+   * Newest first. With a clientId, only that client's calls — where the
+   * default client also owns every record written before calls carried a
+   * client at all.
+   */
+  read(clientId?: string): Promise<CallRecord[]>;
   append(record: CallRecord): Promise<void>;
   /**
    * Amends a record in place, for detail that arrives after the call — the
@@ -59,13 +64,19 @@ export function createCallLogStore(
   }
 
   return {
-    async read(): Promise<CallRecord[]> {
+    async read(clientId?: string): Promise<CallRecord[]> {
+      const filter =
+        clientId === undefined
+          ? {}
+          : clientId === DEFAULT_CLIENT_ID
+            ? { $or: [{ clientId }, { clientId: { $exists: false } }] }
+            : { clientId };
       // Sorted on startedAt rather than insertion order, backed by the index
       // created in server/db/client.ts. The _id tie-break only decides records
       // that started in the same millisecond, and exists so the order is at
       // least stable when that happens.
       const docs = await (await collection())
-        .find({})
+        .find(filter)
         .sort({ startedAt: -1, _id: -1 })
         .toArray();
       return docs.map(toRecord);

@@ -15,18 +15,26 @@ import {
   normaliseOrigin,
   scriptTagSnippet,
 } from "@/lib/embed/snippet";
+import { resolveActiveClient } from "../active-client";
 
 export const dynamic = "force-dynamic";
 
-export default function EmbedPage() {
+export default async function EmbedPage() {
   const result = normaliseOrigin(process.env.NEXT_PUBLIC_EMBED_ORIGIN);
+
+  // The same resolution the console layout does: the snippet on this page is
+  // for the client the rest of the console is showing.
+  const { activeClient } = await resolveActiveClient();
 
   return (
     <div className="mx-auto w-full max-w-3xl px-6 py-8">
       <header className="mb-8">
         <h1 className="text-xl font-semibold tracking-tight text-[var(--text)]">Embed</h1>
         <p className="mt-1.5 text-sm text-[var(--text-muted)]">
-          Put the voice agent on any website as a floating call button.
+          Put <span className="font-medium text-[var(--text)]">{activeClient.name}</span>&apos;s
+          voice agent on any website as a floating call button. This snippet carries the client id{" "}
+          <code className="text-[var(--text)]">{activeClient.id}</code>, so every client gets a
+          snippet of their own — switch clients in the sidebar to get another&apos;s.
         </p>
       </header>
 
@@ -50,8 +58,8 @@ export default function EmbedPage() {
       ) : (
         <>
           <EmbedSnippet
-            consoleSnippet={consoleSnippet(result.origin)}
-            scriptTag={scriptTagSnippet(result.origin)}
+            consoleSnippet={consoleSnippet(result.origin, activeClient.id)}
+            scriptTag={scriptTagSnippet(result.origin, activeClient.id)}
             origin={result.origin}
           />
 
@@ -88,12 +96,14 @@ export default function EmbedPage() {
               <code>{`<script
   src="${result.origin}/embed.js"
   async
+  data-client="${activeClient.id}"
   data-prompt="Need help?"
   data-button-text="Talk to Colleen"
   data-title="Colleen"
 ></script>`}</code>
             </pre>
-            <div className="mt-3 grid gap-2 text-sm text-[var(--text-muted)] sm:grid-cols-3">
+            <div className="mt-3 grid gap-2 text-sm text-[var(--text-muted)] sm:grid-cols-2">
+              <p><code className="text-[var(--text)]">data-client</code><br />Which client&apos;s agent answers. Omitted, the default client&apos;s does.</p>
               <p><code className="text-[var(--text)]">data-prompt</code><br />Compact prompt</p>
               <p><code className="text-[var(--text)]">data-button-text</code><br />Call button label</p>
               <p><code className="text-[var(--text)]">data-title</code><br />Expanded panel title</p>

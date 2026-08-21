@@ -24,6 +24,7 @@ import Image from "next/image";
 
 import { VoiceAura } from "@/components/embed/VoiceAura";
 import { useVoiceSession } from "@/hooks/useVoiceSession";
+import { normaliseClientId } from "@/lib/clients/types";
 import { DEFAULT_EMBED_TEXT, parseEmbedTextConfig } from "@/lib/embed/config";
 
 /** Matches the constants in public/embed.js. Both sides must agree. */
@@ -45,7 +46,15 @@ function postToParent(message: Record<string, unknown>): void {
 }
 
 export default function EmbedWidgetPage() {
-  const voice = useVoiceSession();
+  // Forwarded by embed.js from the snippet's data-client attribute. A missing
+  // or malformed value means the default client — exactly how snippets copied
+  // before clients existed behave.
+  const [clientId] = useState(() =>
+    typeof window === "undefined"
+      ? null
+      : normaliseClientId(new URLSearchParams(window.location.search).get("client")),
+  );
+  const voice = useVoiceSession({ clientId });
   const [view, setView] = useState<"compact" | "panel" | "full">("compact");
   const [dismissedEndedAt, setDismissedEndedAt] = useState<number | null>(null);
   const [text] = useState(() =>

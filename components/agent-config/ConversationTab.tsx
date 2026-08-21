@@ -5,6 +5,7 @@ import { ClipboardList, MessagesSquare } from "lucide-react";
 
 import type { TabProps } from "@/components/agent-config/AgentConfigProvider";
 import { PromptPreview } from "@/components/agent-config/PromptPreview";
+import { SystemPromptPreview } from "@/components/agent-config/SystemPromptPreview";
 import { VariableInsertMenu } from "@/components/agent-config/VariableInsertMenu";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field } from "@/components/ui/field";
@@ -239,6 +240,18 @@ export function ConversationTab({ config, update, errors }: TabProps) {
           The agent says its closing line first, then hangs up about two seconds later so the line
           finishes playing. Every call it ends is recorded under Calls with the reason it gave.
         </p>
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <div>
+          <h2 className="text-sm font-medium text-[var(--text)]">System prompt</h2>
+          <p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">
+            Everything above is assembled into one system prompt when a call starts: the
+            instructions, then either the exact greeting or a note that the caller speaks first,
+            then the call-ending policy. This preview is built by the same code the call uses.
+          </p>
+        </div>
+        <SystemPromptPreview config={config} />
       </section>
     </div>
   );

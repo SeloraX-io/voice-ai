@@ -72,12 +72,19 @@ export function isSecureContextOrigin(origin: string): boolean {
  * Deliberately a loader rather than the widget itself: the real code lives at
  * /embed.js on this origin, so fixing a bug there fixes every page that has
  * already pasted this, with nobody re-copying anything.
+ *
+ * `clientId` decides whose agent the widget calls — it rides along as a
+ * `data-client` attribute on the script tag, which is where embed.js reads all
+ * its configuration. Omitted, the widget calls the default client's agent,
+ * which is how snippets copied before clients existed keep working.
  */
-export function consoleSnippet(origin: string): string {
-  return `(function(){var s=document.createElement('script');s.src='${origin}/embed.js';s.async=true;document.body.appendChild(s);})()`;
+export function consoleSnippet(origin: string, clientId?: string): string {
+  const setClient = clientId ? `s.setAttribute('data-client','${clientId}');` : "";
+  return `(function(){var s=document.createElement('script');s.src='${origin}/embed.js';s.async=true;${setClient}document.body.appendChild(s);})()`;
 }
 
 /** The same loader as a tag, for embedding in a page's HTML properly. */
-export function scriptTagSnippet(origin: string): string {
-  return `<script src="${origin}/embed.js" async></script>`;
+export function scriptTagSnippet(origin: string, clientId?: string): string {
+  const clientAttr = clientId ? ` data-client="${clientId}"` : "";
+  return `<script src="${origin}/embed.js"${clientAttr} async></script>`;
 }

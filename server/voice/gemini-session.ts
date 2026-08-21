@@ -80,10 +80,11 @@ function getClient(): GoogleGenAI {
  */
 export async function loadResolvedAgentConfig(
   log: StoreLogger = () => {},
+  clientId?: string,
 ): Promise<ResolvedAgentConfig> {
   try {
     const store = createConfigStore(getDb, log);
-    return resolveAgentConfig(await store.read());
+    return resolveAgentConfig(await store.read(clientId));
   } catch (cause) {
     // Designed degradation: `store.read()` throws when the database is
     // unreachable, and a call must still connect even then, on default

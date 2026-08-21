@@ -6,6 +6,7 @@ import { useState } from "react";
 import { AudioLines, Menu, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { ClientSwitcher } from "@/components/shell/ClientSwitcher";
 import { AGENT_ROUTES } from "@/lib/agent-config/routes";
 import { cn } from "@/lib/utils";
 import { useNavGuard } from "@/components/shell/DirtyNavGuard";
@@ -82,6 +83,8 @@ export function Sidebar() {
             <X />
           </Button>
         </div>
+
+        <ClientSwitcher />
 
         <p className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-dim)]">
           Agent
