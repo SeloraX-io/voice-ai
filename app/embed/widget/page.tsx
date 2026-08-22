@@ -273,12 +273,21 @@ function CallPanel({
   );
 }
 
+/** Where the logo leads. A new tab, because the widget lives in an iframe on somebody else's page. */
+const SELORAX_SITE_URL = "https://selorax.io";
+
 function PoweredBy() {
   return (
-    <div className="vw-powered" aria-label="Powered by SeloraX">
+    <a
+      className="vw-powered"
+      href={SELORAX_SITE_URL}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label="Powered by SeloraX — visit selorax.io"
+    >
       <span>Powered by</span>
       <Image src={SELORAX_LOGO_URL} alt="SeloraX" width={1918} height={407} unoptimized />
-    </div>
+    </a>
   );
 }
 
@@ -287,7 +296,14 @@ function EndBrand() {
     <div className="vw-end-brand" role="status" aria-label="Call ended. Powered by SeloraX">
       <span className="vw-end-orbit" aria-hidden />
       <p>Powered by</p>
-      <Image src={SELORAX_LOGO_URL} alt="SeloraX" width={1918} height={407} unoptimized />
+      <a
+        href={SELORAX_SITE_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Visit selorax.io"
+      >
+        <Image src={SELORAX_LOGO_URL} alt="SeloraX" width={1918} height={407} unoptimized />
+      </a>
     </div>
   );
 }
@@ -397,6 +413,13 @@ const STYLES = `
   background: rgba(8, 10, 14, 0.52);
   backdrop-filter: blur(8px);
 }
+/* A full-viewport backdrop blur is one of the most expensive things a mobile
+   GPU can be asked for, and it runs on every frame the page under it moves.
+   Touch devices get a slightly darker plain scrim instead, which reads the
+   same. */
+@media (pointer: coarse) {
+  .vw-root-full { backdrop-filter: none; background: rgba(8, 10, 14, 0.7); }
+}
 
 @media (prefers-color-scheme: dark) {
   .vw-root {
@@ -443,19 +466,29 @@ const STYLES = `
   width: 66px; height: 66px; padding: 0;
   border: 1px solid rgba(255, 129, 35, 0.32); border-radius: 50%;
   background: #0b0b0d; color: #ffffff; cursor: pointer;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.24), 0 0 0 0 rgba(255, 129, 35, 0.32);
-  animation: vw-in 220ms cubic-bezier(0.22, 1, 0.36, 1),
-             vw-mobile-glow 2.4s 300ms ease-in-out infinite;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.24);
+  animation: vw-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 .vw-mobile-launch::before {
   content: ""; position: absolute; inset: 5px; border-radius: inherit;
   border: 1px solid rgba(255, 255, 255, 0.09); pointer-events: none;
 }
+/* The pulse animates opacity/transform on a pseudo-element rather than the
+   button's own box-shadow: shadow animation repaints the layer every frame,
+   while this composites — the difference is visible on a phone that is also
+   running the host page. */
+.vw-mobile-launch::after {
+  content: ""; position: absolute; inset: -6px; border-radius: 50%;
+  border: 2px solid rgba(255, 129, 35, 0.3); pointer-events: none;
+  opacity: 0;
+  animation: vw-mobile-glow 2.4s 300ms ease-in-out infinite;
+  will-change: transform, opacity;
+}
 .vw-mobile-launch:focus-visible { outline: 2px solid #ff8123; outline-offset: 3px; }
 .vw-mobile-launch:active { transform: scale(0.96); }
 @keyframes vw-mobile-glow {
-  0%, 100% { box-shadow: 0 8px 28px rgba(0, 0, 0, 0.24), 0 0 0 0 rgba(255, 129, 35, 0.28); }
-  50% { box-shadow: 0 10px 32px rgba(0, 0, 0, 0.28), 0 0 0 8px rgba(255, 129, 35, 0); }
+  0%, 100% { opacity: 0; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1); }
 }
 
 /* A short rise, not a bounce: the widget should feel placed, not thrown. */
@@ -488,7 +521,10 @@ const STYLES = `
   margin-top: 9px; padding: 5px 8px; border-radius: 999px;
   background: #0b0b0d; color: #a1a1aa;
   font-size: 8px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  text-decoration: none; cursor: pointer; transition: color 160ms ease;
 }
+.vw-powered:hover { color: #e4e4e7; }
+.vw-powered:focus-visible { outline: 2px solid #3aa5f5; outline-offset: 2px; }
 .vw-powered img { display: block; width: 62px; height: auto; }
 
 .vw-end-brand {
@@ -510,8 +546,14 @@ const STYLES = `
   font-size: 10px; font-weight: 650; letter-spacing: 0.16em; text-transform: uppercase;
   animation: vw-brand-copy 500ms 100ms ease-out both;
 }
+/* The logo link owns the width the image used to have, so the image fills it
+   and the click target is exactly the logo. */
+.vw-end-brand a {
+  display: block; width: min(190px, 82%); border-radius: 6px;
+}
+.vw-end-brand a:focus-visible { outline: 2px solid #ff8123; outline-offset: 4px; }
 .vw-end-brand img {
-  display: block; width: min(190px, 82%); height: auto;
+  display: block; width: 100%; height: auto;
   animation: vw-brand-logo 650ms 130ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .vw-end-orbit {
@@ -589,7 +631,7 @@ const STYLES = `
 @media (prefers-reduced-motion: reduce) {
   .vw-enter, .vw-dot-pulse, .vw-end-brand, .vw-end-brand::after,
   .vw-end-brand p, .vw-end-brand img, .vw-end-orbit,
-  .vw-mobile-launch { animation: none !important; }
+  .vw-mobile-launch, .vw-mobile-launch::after { animation: none !important; }
   .vw-btn { transition: none; }
 }
 `;
