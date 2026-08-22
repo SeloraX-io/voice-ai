@@ -276,6 +276,17 @@ interface AuraShaderProps {
    * @default 'dark'
    */
   themeMode?: 'dark' | 'light';
+
+  /**
+   * Caps the canvas devicePixelRatio. The aura is soft by design, so rendering
+   * fewer physical pixels and letting CSS upscale is visually indistinguishable
+   * — while an uncapped canvas on a DPR-3 phone pays 9x the fragment cost of a
+   * DPR-1 one, per frame, for a 36-iteration shader.
+   */
+  maxDevicePixelRatio?: number;
+
+  /** GLSL float precision for the fragment shader. */
+  precision?: 'highp' | 'mediump' | 'lowp';
 }
 
 function AuraShader({
@@ -291,6 +302,8 @@ function AuraShader({
   themeMode = typeof window !== 'undefined' && document.documentElement.classList.contains('dark')
     ? 'dark'
     : 'light',
+  maxDevicePixelRatio,
+  precision = 'highp',
   ref,
   className,
   ...props
@@ -301,7 +314,11 @@ function AuraShader({
     <div ref={ref} className={className} {...props}>
       <ReactShaderToy
         fs={shaderSource}
-        devicePixelRatio={globalThis.devicePixelRatio ?? 1}
+        devicePixelRatio={Math.min(
+          globalThis.devicePixelRatio ?? 1,
+          maxDevicePixelRatio ?? Number.POSITIVE_INFINITY,
+        )}
+        precision={precision}
         uniforms={{
           // Aurora wave speed
           uSpeed: { type: '1f', value: speed },
@@ -391,6 +408,10 @@ export interface AgentAudioVisualizerAuraProps {
    * Externally supplied scalar volume. When provided, this overrides audioTrack volume data.
    */
   volume?: number;
+  /** See AuraShaderProps.maxDevicePixelRatio. */
+  maxDevicePixelRatio?: number;
+  /** See AuraShaderProps.precision. */
+  precision?: 'highp' | 'mediump' | 'lowp';
 }
 
 /**
@@ -416,6 +437,8 @@ export function AgentAudioVisualizerAura({
   colorShift = 0.05,
   volume,
   themeMode,
+  maxDevicePixelRatio,
+  precision,
   className,
   ref,
   ...props
@@ -437,6 +460,8 @@ export function AgentAudioVisualizerAura({
       speed={speed}
       scale={scale}
       themeMode={themeMode}
+      maxDevicePixelRatio={maxDevicePixelRatio}
+      precision={precision}
       amplitude={amplitude}
       frequency={frequency}
       brightness={brightness}

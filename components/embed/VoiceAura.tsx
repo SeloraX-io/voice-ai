@@ -86,6 +86,42 @@ function toAgentState(status: string | undefined, idle: boolean): AgentState {
   }
 }
 
+/**
+ * Devices where the shader's cost is a real problem: phones and tablets. The
+ * shader loops 36 iterations of 4-layer turbulence per pixel per frame — on a
+ * DPR-3 phone that runs the fans on a laptop and visibly lags the HOST page,
+ * which is somebody else's site. Media-query based rather than UA sniffing, and
+ * sampled once: a device does not change class mid-session.
+ */
+const LOW_POWER_QUERY = "(pointer: coarse), (max-width: 640px)";
+
+function isLowPowerDevice(): boolean {
+  return typeof window !== "undefined" && window.matchMedia(LOW_POWER_QUERY).matches;
+}
+
+/**
+ * What a low-power device shows instead of the shader while nothing is
+ * happening: a static CSS orb in the aura's colours. Zero per-frame cost — the
+ * embed pill sits on the host page from load, and before this fallback it was
+ * running the full shader at 60fps for every mobile visitor who never tapped
+ * it.
+ */
+function StaticOrb({ size }: { size: number }) {
+  return (
+    <div
+      aria-hidden
+      className="aspect-square"
+      style={{
+        width: size,
+        height: size,
+        borderRadius: "50%",
+        background:
+          "radial-gradient(circle at 50% 45%, rgba(255,255,255,0.95) 0%, rgba(31,213,249,0.85) 32%, rgba(31,213,249,0.22) 60%, transparent 74%)",
+      }}
+    />
+  );
+}
+
 export function VoiceAura({
   size,
   status,
@@ -93,6 +129,9 @@ export function VoiceAura({
   idle = false,
   themeMode = "light",
 }: VoiceAuraProps) {
+  // Sampled once per mount, so the shader is never mounted and unmounted by a
+  // window resize mid-call.
+  const [lowPower] = useState(isLowPowerDevice);
   const [volume, setVolume] = useState(0);
   // Held in a ref as well so the interval can compare against the last value
   // without re-subscribing every time it changes.
@@ -129,12 +168,22 @@ export function VoiceAura({
   // instead of scheduling another one.
   const effectiveVolume = idle ? 0 : volume;
 
+  // No WebGL at all while a low-power device idles. The shader only exists
+  // while a call is being set up or is live, which is also the only time its
+  // motion carries information.
+  if (idle && lowPower) return <StaticOrb size={size} />;
+
   return (
     <AgentAudioVisualizerAura
       state={toAgentState(status, idle)}
       volume={effectiveVolume}
       themeMode={themeMode}
       color="#1FD5F9"
+      // The aura is soft by design, so a low-DPR canvas upscaled by CSS is
+      // indistinguishable — and on a DPR-3 phone it is a 9x fragment saving.
+      // Desktop keeps retina sharpness; 2 is a no-op for almost every screen.
+      maxDevicePixelRatio={lowPower ? 1 : 2}
+      precision={lowPower ? "mediump" : "highp"}
       // Upstream sizes via a Tailwind variant with fixed steps (24/56/112/…).
       // The widget needs exact pixels to fit its card, so the preset is
       // overridden here rather than the card being resized to suit it.
