@@ -78,3 +78,27 @@ test("the script tag points at the same file", () => {
   const tag = scriptTagSnippet("https://voice.example.com");
   assert.equal(tag, '<script src="https://voice.example.com/embed.js" async></script>');
 });
+
+test("a client id rides along as data-client on the script tag", () => {
+  const tag = scriptTagSnippet("https://voice.example.com", "acme-dental");
+  assert.equal(
+    tag,
+    '<script src="https://voice.example.com/embed.js" data-client="acme-dental" async></script>',
+  );
+});
+
+test("the console snippet sets data-client before mounting the script", () => {
+  const snippet = consoleSnippet("https://voice.example.com", "acme-dental");
+  assert.ok(snippet.includes("s.setAttribute('data-client','acme-dental')"));
+  // The attribute must exist before the loader runs, so it is set pre-append.
+  assert.ok(
+    snippet.indexOf("data-client") < snippet.indexOf("appendChild"),
+    "data-client must be set before the script is appended",
+  );
+  assert.equal(snippet.includes("\n"), false);
+});
+
+test("without a client id, neither snippet mentions data-client", () => {
+  assert.equal(consoleSnippet("https://voice.example.com").includes("data-client"), false);
+  assert.equal(scriptTagSnippet("https://voice.example.com").includes("data-client"), false);
+});

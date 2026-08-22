@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import { KeyRound, Plus, Trash2 } from "lucide-react";
 
-import type { TabProps } from "@/components/agent-config/AgentConfigProvider";
+import { useAgentConfig, type TabProps } from "@/components/agent-config/AgentConfigProvider";
 import { Button } from "@/components/ui/button";
 import { Field, controlClass } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -21,6 +21,9 @@ function usedIn(name: string, instructions: string, welcome: string): string[] {
 }
 
 export function AdvancedTab({ config, update, setSecretKeys, errors }: TabProps) {
+  // From context rather than props so the other tabs' signatures stay put:
+  // this is the only screen that makes client-scoped fetches of its own.
+  const { clientId } = useAgentConfig();
   const secretKeys = config.secretKeys;
   const [newSecretKey, setNewSecretKey] = useState("");
   const [newSecretValue, setNewSecretValue] = useState("");
@@ -71,7 +74,7 @@ export function AdvancedTab({ config, update, setSecretKeys, errors }: TabProps)
 
     setSecretBusy(true);
     try {
-      const response = await fetch("/api/agent-config/secrets", {
+      const response = await fetch(`/api/agent-config/secrets?client=${encodeURIComponent(clientId)}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ key: newSecretKey, value: newSecretValue }),
@@ -90,7 +93,7 @@ export function AdvancedTab({ config, update, setSecretKeys, errors }: TabProps)
     } finally {
       setSecretBusy(false);
     }
-  }, [newSecretKey, newSecretValue, setSecretKeys]);
+  }, [clientId, newSecretKey, newSecretValue, setSecretKeys]);
 
   const removeSecret = useCallback(
     async (key: string) => {
@@ -98,9 +101,10 @@ export function AdvancedTab({ config, update, setSecretKeys, errors }: TabProps)
       setSecretError(null);
 
       try {
-        const response = await fetch(`/api/agent-config/secrets?key=${encodeURIComponent(key)}`, {
-          method: "DELETE",
-        });
+        const response = await fetch(
+          `/api/agent-config/secrets?key=${encodeURIComponent(key)}&client=${encodeURIComponent(clientId)}`,
+          { method: "DELETE" },
+        );
         if (!response.ok) {
           const body: { errors?: { message: string }[] } = await response.json().catch(() => ({}));
           setSecretError(body.errors?.[0]?.message ?? "Could not delete the secret.");
@@ -112,7 +116,7 @@ export function AdvancedTab({ config, update, setSecretKeys, errors }: TabProps)
         setSecretError("Could not reach the server.");
       }
     },
-    [setSecretKeys],
+    [clientId, setSecretKeys],
   );
 
   return (

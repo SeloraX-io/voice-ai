@@ -175,7 +175,7 @@ export class VoiceClient {
  * into the bundle and readable by anyone who loads the console. Mint a key for
  * the console alone, and revoke it on its own when the time comes.
  */
-export function resolveGatewayUrl(): string {
+export function resolveGatewayUrl(options?: { clientId?: string | null }): string {
   const configured = process.env.NEXT_PUBLIC_VOICE_GATEWAY_URL;
   const base =
     configured ||
@@ -184,9 +184,13 @@ export function resolveGatewayUrl(): string {
       : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.hostname}:4000/voice`);
 
   const key = process.env.NEXT_PUBLIC_VOICE_GATEWAY_KEY;
-  if (!key) return base;
+  const clientId = options?.clientId ?? null;
+  if (!key && !clientId) return base;
 
   const url = new URL(base);
-  url.searchParams.set("key", key);
+  if (key) url.searchParams.set("key", key);
+  // Which client's agent should take the call. Omitted, the gateway answers
+  // with the default client — how every pre-client caller behaves.
+  if (clientId) url.searchParams.set("client", clientId);
   return url.toString();
 }

@@ -75,9 +75,13 @@
   var prompt = configuredText("data-prompt");
   var buttonText = configuredText("data-button-text");
   var title = configuredText("data-title");
+  // Which client's agent answers. Validated properly server-side; the shape
+  // check here only keeps junk out of the URL.
+  var client = configuredText("data-client");
   if (prompt) params.set("prompt", prompt);
   if (buttonText) params.set("buttonText", buttonText);
   if (title) params.set("title", title);
+  if (client && /^[a-z0-9][a-z0-9-]{0,62}$/.test(client)) params.set("client", client);
   if (mobileCompact) params.set("mobile", "1");
 
   var frame = document.createElement("iframe");

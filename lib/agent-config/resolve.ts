@@ -47,11 +47,26 @@ export function resolveAgentConfig(config: AgentConfig): ResolvedAgentConfig {
 }
 
 /**
+ * Appended when no greeting will be primed, so the prompt describes the call
+ * the agent is actually on. Without it, instructions that mention opening the
+ * call order behaviour the agent cannot perform — the model never gets a first
+ * turn unless the gateway primes one, and it only primes when the welcome
+ * message is enabled.
+ */
+export const WAIT_FOR_CALLER_DIRECTIVE =
+  "The caller speaks first. Do not deliver a scripted opening; respond directly to whatever the caller says.";
+
+/**
  * The system instruction actually sent to Gemini.
  *
  * Gemini Live has no "say this first" field, so an enabled welcome message
  * becomes a directive appended to the prompt. It is an instruction to a
  * language model, so expect near-verbatim delivery rather than byte-exact.
+ *
+ * The opening is stated in BOTH branches on purpose: either the exact greeting,
+ * or the fact that the caller speaks first. The two branches mirror the
+ * gateway's primeGreeting condition exactly, which is what keeps the prompt and
+ * the agent's actual behaviour from contradicting each other.
  */
 export function buildSystemInstruction(resolved: ResolvedAgentConfig): string {
   const sections = [resolved.instructions];
@@ -59,6 +74,8 @@ export function buildSystemInstruction(resolved: ResolvedAgentConfig): string {
   const greeting = resolved.welcome.message.trim();
   if (resolved.welcome.enabled && greeting !== "") {
     sections.push(`Open the call by saying exactly: "${greeting}"`);
+  } else {
+    sections.push(WAIT_FOR_CALLER_DIRECTIVE);
   }
 
   // The policy alone is not enough: the model also has to be told the mechanism,

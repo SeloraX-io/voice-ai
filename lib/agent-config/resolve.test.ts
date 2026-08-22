@@ -2,7 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { DEFAULT_AGENT_CONFIG } from "./defaults";
-import { buildSystemInstruction, resolveAgentConfig } from "./resolve";
+import {
+  WAIT_FOR_CALLER_DIRECTIVE,
+  buildSystemInstruction,
+  resolveAgentConfig,
+} from "./resolve";
 import type { AgentConfig } from "./schema";
 
 function config(overrides: Partial<AgentConfig> = {}): AgentConfig {
@@ -47,7 +51,9 @@ test("appends the greeting directive when the welcome is enabled", () => {
   );
 });
 
-test("omits the greeting directive when the welcome is disabled", () => {
+test("a disabled welcome states that the caller speaks first", () => {
+  // The gateway will not prime a greeting turn, so the prompt must not leave
+  // room for instructions that assume the agent opens the call.
   const resolved = resolveAgentConfig(
     config({
       instructions: "Be brief.",
@@ -55,10 +61,10 @@ test("omits the greeting directive when the welcome is disabled", () => {
       callEnding: { enabled: false, policy: "" },
     }),
   );
-  assert.equal(buildSystemInstruction(resolved), "Be brief.");
+  assert.equal(buildSystemInstruction(resolved), `Be brief.\n\n${WAIT_FOR_CALLER_DIRECTIVE}`);
 });
 
-test("omits the greeting directive when the message is blank", () => {
+test("a blank welcome message states that the caller speaks first", () => {
   const resolved = resolveAgentConfig(
     config({
       instructions: "Be brief.",
@@ -66,7 +72,18 @@ test("omits the greeting directive when the message is blank", () => {
       callEnding: { enabled: false, policy: "" },
     }),
   );
-  assert.equal(buildSystemInstruction(resolved), "Be brief.");
+  assert.equal(buildSystemInstruction(resolved), `Be brief.\n\n${WAIT_FOR_CALLER_DIRECTIVE}`);
+});
+
+test("an enabled greeting and the wait directive are mutually exclusive", () => {
+  const resolved = resolveAgentConfig(
+    config({
+      instructions: "Be brief.",
+      welcome: { enabled: true, message: "Hi there.", allowInterrupt: true },
+      callEnding: { enabled: false, policy: "" },
+    }),
+  );
+  assert.equal(buildSystemInstruction(resolved).includes(WAIT_FOR_CALLER_DIRECTIVE), false);
 });
 
 test("appends the hang-up policy, and names the mechanism as well as the rule", () => {
@@ -93,7 +110,20 @@ test("omits the hang-up section when the agent may not end calls", () => {
       callEnding: { enabled: false, policy: "End on abuse." },
     }),
   );
-  assert.equal(buildSystemInstruction(resolved), "Be brief.");
+  const instruction = buildSystemInstruction(resolved);
+  assert.equal(instruction.includes("end_call"), false);
+  assert.equal(instruction.includes("End on abuse."), false);
+});
+
+test("the default config opens with the default greeting, not the wait directive", () => {
+  // The seed persona greets: welcome is enabled by default, and the
+  // instructions themselves say nothing about opening the call — the greeting
+  // directive is the single source of that behaviour.
+  const instruction = buildSystemInstruction(resolveAgentConfig(config()));
+  assert.equal(DEFAULT_AGENT_CONFIG.welcome.enabled, true);
+  assert.equal(DEFAULT_AGENT_CONFIG.instructions.includes("Open the call"), false);
+  assert.ok(instruction.includes(`Open the call by saying exactly: "${DEFAULT_AGENT_CONFIG.welcome.message}"`));
+  assert.equal(instruction.includes(WAIT_FOR_CALLER_DIRECTIVE), false);
 });
 
 test("interpolates variables into the hang-up policy", () => {

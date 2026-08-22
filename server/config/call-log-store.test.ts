@@ -119,3 +119,23 @@ test("an unreachable database throws rather than reading as empty", async () => 
   const store = createCallLogStore(unreachableDb(), () => {});
   await assert.rejects(() => store.read());
 });
+
+test("a client filter returns only that client's calls", async () => {
+  const store = createCallLogStore(await freshDb());
+  await store.append({ ...record("acme-call"), clientId: "acme" });
+  await store.append({ ...record("globex-call", 1), clientId: "globex" });
+
+  assert.deepEqual((await store.read("acme")).map((call) => call.id), ["acme-call"]);
+  // No filter still reads everything.
+  assert.equal((await store.read()).length, 2);
+});
+
+test("the default client owns records written before calls carried a client id", async () => {
+  const store = createCallLogStore(await freshDb());
+  await store.append(record("legacy-call")); // no clientId at all
+  await store.append({ ...record("acme-call", 1), clientId: "acme" });
+  await store.append({ ...record("default-call", 2), clientId: "singleton" });
+
+  const ids = (await store.read("singleton")).map((call) => call.id).sort();
+  assert.deepEqual(ids, ["default-call", "legacy-call"]);
+});

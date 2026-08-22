@@ -37,6 +37,7 @@ import {
   type VoiceErrorCode,
 } from "../../types/voice";
 import { END_CALL_TOOL_NAME } from "../../lib/agent-config/tool-declarations";
+import { DEFAULT_CLIENT_ID, normaliseClientId } from "../../lib/clients/types";
 import type { ResolvedAgentConfig } from "../../lib/agent-config/resolve";
 import { configStore } from "../config/store";
 import { GeminiVoiceSession, loadResolvedAgentConfig, type LiveFunctionCall } from "./gemini-session";
@@ -194,6 +195,14 @@ interface CallState {
    */
   readonly channel: CallChannel;
   readonly phone: { from: string | null; to: string | null } | null;
+  /**
+   * Whose agent answers this call. From the connection's `client` query
+   * parameter; a missing or malformed value falls back to the default client,
+   * so the preview, the telephony bridge and pre-client embeds all keep
+   * working. An unknown-but-valid id simply reads as default config, the same
+   * as an unconfigured client.
+   */
+  readonly clientId: string;
 }
 
 /**
@@ -211,6 +220,7 @@ interface CallState {
 export function parseCallOrigin(request: UpgradeRequestLike): {
   channel: CallChannel;
   phone: CallState["phone"];
+  clientId: string;
 } {
   const url = upgradeUrl(request);
   const channel = readCallChannel(url.searchParams.get("channel"));
@@ -219,7 +229,9 @@ export function parseCallOrigin(request: UpgradeRequestLike): {
   const to = url.searchParams.get("to")?.slice(0, MAX_PHONE_FIELD_CHARS) ?? null;
   const phone = from !== null || to !== null ? { from, to } : null;
 
-  return { channel, phone };
+  const clientId = normaliseClientId(url.searchParams.get("client")) ?? DEFAULT_CLIENT_ID;
+
+  return { channel, phone, clientId };
 }
 
 /** Milliseconds since the call began, for placing a line or event in time. */
@@ -361,7 +373,7 @@ async function handleConnection(
   request: IncomingMessage,
   log: NonNullable<VoiceGatewayOptions["log"]>,
 ): Promise<void> {
-  const { channel, phone } = parseCallOrigin(request);
+  const { channel, phone, clientId } = parseCallOrigin(request);
   const state: CallState = {
     id: randomUUID(),
     gemini: null,
@@ -393,6 +405,7 @@ async function handleConnection(
     log,
     channel,
     phone,
+    clientId,
   };
   callStates.set(socket, state);
 
@@ -446,9 +459,16 @@ async function handleConnection(
     closeCall(socket, state, 1011, "socket error");
   });
 
-  log("call connected", { id: state.id, remote: request.socket.remoteAddress ?? "unknown" });
+  log("call connected", {
+    id: state.id,
+    client: state.clientId,
+    remote: request.socket.remoteAddress ?? "unknown",
+  });
 
-  const agent = await loadResolvedAgentConfig((message) => log(message, { id: state.id }));
+  const agent = await loadResolvedAgentConfig(
+    (message) => log(message, { id: state.id }),
+    state.clientId,
+  );
   state.allowGreetingInterrupt = agent.welcome.allowInterrupt;
   state.summaryConfig = agent.summary;
   note(state, "connected", `${agent.models.liveModel} · ${agent.models.voice}`);
@@ -726,6 +746,7 @@ function recordCall(state: CallState, endedBy: CallRecord["endedBy"]): void {
     summary: null,
     channel: state.channel,
     phone: state.phone,
+    clientId: state.clientId,
   };
 
   // Written first, then updated with the summary. The cost and transcript are
@@ -833,7 +854,7 @@ async function runToolCalls(
     }
 
     // Read once per batch, and only when a tool actually needs them.
-    secrets ??= await configStore.resolveSecrets();
+    secrets ??= await configStore.resolveSecrets(state.clientId);
 
     // A generated id when the model omits one, so the console can still pair
     // the result with the call it belongs to.

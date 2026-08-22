@@ -13,8 +13,11 @@ interface PromptPreviewProps {
 }
 
 /**
- * Shows exactly what the model will receive. Unknown tokens are a warning, not
- * an error — a prompt may legitimately contain braces.
+ * ONE field with its variables substituted — not the prompt the model
+ * receives. The system instruction sent to Gemini also carries the opening
+ * directive and the call-ending section; SystemPromptPreview shows that whole
+ * assembly. Unknown tokens are a warning, not an error — a prompt may
+ * legitimately contain braces.
  */
 export function PromptPreview({ text, variables }: PromptPreviewProps) {
   const [open, setOpen] = useState(false);

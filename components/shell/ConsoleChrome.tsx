@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAgentConfig } from "@/components/agent-config/AgentConfigProvider";
 import { SaveBar } from "@/components/agent-config/SaveBar";
 import { PreviewPanel } from "@/components/preview/PreviewPanel";
+import { useClients } from "@/components/shell/ClientProvider";
 import { Sidebar } from "@/components/shell/Sidebar";
 import { useVoiceSession } from "@/hooks/useVoiceSession";
 import { CONFIG_ROUTES } from "@/lib/agent-config/routes";
@@ -19,9 +20,13 @@ export function ConsoleChrome({ children }: { children: React.ReactNode }) {
   const showSaveBar = CONFIG_ROUTES.includes(pathname);
 
   const { config, dirty, save } = useAgentConfig();
+  const { activeClient } = useClients();
   // Held here, above the router, so navigating between screens cannot tear down
-  // an in-flight call.
-  const voice = useVoiceSession();
+  // an in-flight call. Scoped to the active client so the preview exercises the
+  // same configuration the editors are showing. A client switch remounts this
+  // component (the layout keys the provider), which is what ends a call rather
+  // than leaving it running against the previous client.
+  const voice = useVoiceSession({ clientId: activeClient.id });
 
   // The saved-config stamp a live call started with, so the panel can tell the
   // tester when a later save has left the running call on stale settings.

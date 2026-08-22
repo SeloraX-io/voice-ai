@@ -118,6 +118,11 @@ export interface CallRecord {
    * was known.
    */
   phone?: { from: string | null; to: string | null } | null;
+  /**
+   * Which client's agent took the call. Absent on records written before
+   * clients existed; those belong to the default client.
+   */
+  clientId?: string;
 }
 
 /**
