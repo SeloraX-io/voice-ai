@@ -466,7 +466,11 @@ const STYLES = `
   width: 66px; height: 66px; padding: 0;
   border: 1px solid rgba(255, 129, 35, 0.32); border-radius: 50%;
   background: #0b0b0d; color: #ffffff; cursor: pointer;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.24);
+  /* No drop shadow: the button fills the 76px iframe minus 5px padding, so an
+     outer shadow has nowhere to fall — it clips at the frame edge and reads as
+     a square smudge on the host page. Depth comes from the inset highlight,
+     which stays inside the button. */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
   animation: vw-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 .vw-mobile-launch::before {
@@ -478,7 +482,9 @@ const STYLES = `
    while this composites — the difference is visible on a phone that is also
    running the host page. */
 .vw-mobile-launch::after {
-  content: ""; position: absolute; inset: -6px; border-radius: 50%;
+  /* -4px, not more: the 5px root padding is all the room there is before the
+     iframe edge clips the ring flat on one side. */
+  content: ""; position: absolute; inset: -4px; border-radius: 50%;
   border: 2px solid rgba(255, 129, 35, 0.3); pointer-events: none;
   opacity: 0;
   animation: vw-mobile-glow 2.4s 300ms ease-in-out infinite;
